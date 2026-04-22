@@ -37,11 +37,10 @@ Click any boss name in the panel to open the transmog collection browser for tha
 * **Hand-written solo tips** focused on what matters for solo play — what mechanics to worry about, what to skip, Mythic-only gotchas. Not generic Encounter Journal text.
 * **Transmog collection tracker.** Per-item, per-difficulty state with cross-source awareness (detects appearances you own via sibling items).
 * **Weapon-token vendor hints.** For raids with token-based weapons (Castle Nathria's Anima Spherules), points you to your Covenant Sanctum vendor in your covenant's theme color.
-* **Special-loot detection.** Mount, pet, toy, and decor drops are surfaced per boss with collection state and clickable links.
+* **Special-loot detection.** Mount, pet, and toy drops are surfaced per boss with collection state and clickable links. Housing decor support is in place under the hood and will be populated for raids that drop decor as Blizzard expands the Midnight housing catalog.
 * **Achievement callouts.** Per-boss list with completed state and clickable in-game links.
 * **Automatic kill detection.** Listens for `ENCOUNTER_END` and syncs with Blizzard's lockout API, so progression state is correct across reloads, disconnects, and character swaps within the same lockout.
 * **Configurable.** Font size, window scale, panel position — all persisted per character.
-* **Built-in route recorder.** If you want to contribute support for a new raid, `/rr record` captures your footsteps and teleport hops into a paste-ready data block.
 
 ## Commands
 
@@ -56,7 +55,6 @@ Main commands — type in chat:
 | `/rr test` | Enter test mode (cycle bosses without actually killing them) |
 | `/rr next` | In test mode, advance to the next boss |
 | `/rr real` | Exit test mode |
-| `/rr record` | Start recording a new raid route (power-user) |
 
 ## Status
 
@@ -66,7 +64,11 @@ All three Shadowlands raids are feature-complete with full routing, encounter no
 
 ## Reporting bugs / requesting features
 
-Open an issue on the addon's repository, or reach out in the Discord server where you got the link.
+A few ways to reach me, in rough order of preference:
+
+* **GitHub issues** — [github.com/slator82/RetroRuns/issues](https://github.com/slator82/RetroRuns/issues). Best for bug reports and feature requests; keeps everything searchable.
+* **CurseForge comments** — the comments section on the addon's CurseForge page.
+* **Discord** — if we're in the same server, feel free to ping me directly.
 
 When reporting a bug, the following info helps:
 
@@ -75,25 +77,9 @@ When reporting a bug, the following info helps:
 * What you expected vs what actually happened
 * Screenshot if visual
 
-## Contributing a new raid
+## Suggesting a raid
 
-Raids are data-driven: each supported raid lives in a single `Data/<Raid>.lua` file with boss entries, routes, and loot tables. Adding a new raid is a four-phase process:
-
-1. **Identify** the raid (name, expansion, patch).
-2. **Skeleton** — create the data file with empty slots.
-3. **Capture** — walk through the raid with `/rr record` to capture the route, write solo-play notes as you go, run `/rr harvest` for loot data.
-4. **Integrate** — paste the captured data into the skeleton.
-
-Reach out via the CurseForge comments or a GitHub issue if you're interested in contributing a specific raid; happy to walk through the schema.
-
-The author's priority order for additional raids is:
-
-1. Ny'alotha, The Waking City (BfA)
-2. Eternal Palace (BfA)
-3. Antorus, the Burning Throne (Legion)
-4. Tomb of Sargeras (Legion)
-
-Community votes for different priorities are welcome.
+Additional raid support is planned. Suggestions are welcome via the CurseForge comments or a GitHub issue, with preference given to raids that have complex layouts or optional kill orders — those are where the addon earns its keep.
 
 ## Credits
 
