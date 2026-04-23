@@ -66,7 +66,7 @@ All three Shadowlands raids are feature-complete with full routing, encounter no
 
 A few ways to reach me, in rough order of preference:
 
-* **GitHub issues** — [github.com/slator82/RetroRuns/issues](https://github.com/slator82/RetroRuns/issues). Best for bug reports and feature requests; keeps everything searchable.
+* **GitHub issues** — [github.com/PhotekWoW/RetroRuns/issues](https://github.com/PhotekWoW/RetroRuns/issues). Best for bug reports and feature requests; keeps everything searchable.
 * **CurseForge comments** — the comments section on the addon's CurseForge page.
 * **Email** — [retroruns.support@gmail.com](mailto:retroruns.support@gmail.com). Good for private reports, or anything that doesn't fit a public forum.
 * **Discord** — if we're in the same server, feel free to ping me directly.
