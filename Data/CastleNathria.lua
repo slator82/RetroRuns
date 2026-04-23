@@ -2,73 +2,32 @@
 -- RetroRuns Data -- Castle Nathria
 -- Shadowlands, Patch 9.0  |  instanceID: 2296  |  journalInstanceID: 1190
 -------------------------------------------------------------------------------
--- Phase 2 skeleton: metadata complete; loot, achievements, and routing
--- populated opportunistically as Photek records them in-game.
+-- Castle Nathria is the first Shadowlands raid (9.0). Two structural
+-- notes worth understanding when reading this file:
 --
--- CN-SPECIFIC NOTES FOR FUTURE MAINTAINERS:
+-- 1. Weapon tokens instead of armor tier sets. 9.0 predates the modern
+--    armor tier-set system (which returned in 9.2 / Sepulcher). CN
+--    instead has 6 class-restricted weapon tokens -- "Anima Spherules"
+--    for main-hand weapons, "Anima Beads" for off-hands. Each token
+--    drops from a specific boss and is redeemed at the Covenant Sanctum
+--    weaponsmith for a covenant-themed weapon appearance. The covenant
+--    chosen at redemption time controls only the visual skin; the
+--    token's class eligibility and weapon slot are fixed by the token
+--    itself. Each token family (Mystic, Abominable, Apogee, Venerated,
+--    Thaumaturgic, Zenith) has a lower-ilvl and higher-ilvl itemID, so
+--    `tokenSources` has 12 entries despite only 6 families.
 --
--- 1. Weapon tokens, not armor tier sets. 9.0 predates the modern armor
---    tier-set system (that came back in 9.2 Sepulcher). Instead, CN
---    introduced 6 CLASS-RESTRICTED weapon tokens ("Anima Spherules" for
---    main-hand, "Anima Beads" for off-hand). Each token drops from a
---    specific boss and can be redeemed at the Covenant Sanctum weaponsmith
---    for a covenant-themed weapon appearance. Covenant only controls the
---    visual skin applied at redemption -- the token's class-eligibility
---    and weapon slot are both fixed by the token itself.
+-- 2. Boss order is non-linear (DAG). Shriekwing unlocks three parallel
+--    bosses (Altimor, Hungering Destroyer, Xy'mox-precursor), which
+--    gate the Council of Blood (left branch) and Lady Inerva (right
+--    branch), which together gate the Sludgefist / Stone Legion
+--    Generals / Sire Denathrius final sequence. The routing[] block's
+--    `requires` field encodes these gates.
 --
--- 2. Two ilvl tiers per token family. Each family (Mystic, Abominable,
---    Apogee, Venerated, Thaumaturgic, Zenith) has a LOWER-ilvl and
---    HIGHER-ilvl token itemID. LFR/Normal/Heroic bosses drop the lower;
---    Mythic drops the higher. This is why `tokenSources` below has 12
---    entries despite only 6 families.
---
--- 3. Spherules are NOT Blizzard-native ensembles. Confirmed in-game
---    2026-04-21 via `C_Item.GetItemLearnTransmogSet(itemID)` returning
---    nil for all 3 spherules tested (183892, 183888, plus one more).
---    That means `C_Transmog.GetAllSetAppearancesByID` can't tell us what
---    appearances a token unlocks -- we'll ship curated appearance pools
---    in a future data update (mirrored from TTT addon's CN/tokens.lua).
---
--- 4. `/rr tiersets` does NOT auto-populate CN's tokenSources. The
---    harvester's name-matching relies on slot keywords ("helm",
---    "shoulder", etc.) that don't appear in CN's weapon-token names
---    ("Anima Spherule", "Anima Bead"). tokenSources below is hand-
---    populated from TTT cross-reference + the Wowhead token table.
---    Also note that CN's tokenSources uses a list-valued variant
---    (`[itemID] = {bossA, bossB}`) because Sire Denathrius and Stone
---    Legion Generals both drop tokens as secondary sources in addition
---    to the primary-boss drops. Backwards compatible: scalar-valued
---    entries still work for single-boss tokens (e.g. Sepulcher).
---
--- 5. `/rr harvest` will still discover each boss's regular (non-tier)
---    armor loot correctly -- those are standard per-difficulty items
---    that the armor-shape detection handles.
---
--- 6. Armor items are Sanctum-shape: 4 distinct sourceIDs per item, each
---    under its own appearanceID. Verified via ATT cross-reference (60/60
---    clean). Harvester's `EnrichWithPerDifficultySources` path handles
---    this without modification.
---
--- 7. Boss order is a DAG, not linear. Shriekwing unlocks 3 parallel
---    bosses, which then gate Council (left branch) and Lady Inerva
---    (right branch), which together gate the Sludgefist/SLG/Denathrius
---    final sequence. The `routing[]` block's `requires` field needs to
---    model these gates -- see Phase 3 routing for details when it lands.
---
--- 8. specialLoot: intentionally empty on every boss. Castle Nathria's
---    two collectibles are NOT attributed to boss EJ loot tables:
---      - Mount 182596 (Sinrunner Blanchy's Reins?) is the Glory of the
---        Nathria Raider achievement reward (achID 14355). Not a boss
---        drop; granted by achievement completion.
---      - Pet 183395 is attributed by ATT to npcID 173994 within the
---        Denathrius encounter block, but doesn't appear in live 12.0.5
---        EJ loot (verified 2026-04-21 via /rr ejdiff 2424 list — 85
---        items reported, pet not among them). Likely trash drop or
---        removed.
---    Our harvester only surfaces mount/pet/toy/decor items that the EJ
---    lists as boss loot; both of CN's collectibles are out of scope for
---    that code path. If we ever add achievement-reward or trash-drop
---    tracking, revisit both. Until then: specialLoot stays empty.
+-- Castle Nathria's two notable collectibles -- the Nathria Rampart
+-- Screecher mount (from the Glory of the Nathria Raider meta-
+-- achievement) and a Denathrius-adjacent pet -- are not direct boss
+-- loot, so `specialLoot` is empty on every boss.
 -------------------------------------------------------------------------------
 
 RetroRuns_Data = RetroRuns_Data or {}
@@ -81,52 +40,43 @@ RetroRuns_Data[2296] = {
     patch             = "9.0",
 
     maps = {
-        -- Sub-zone names TBD: populate from the in-game world-map dropdown
-        -- opportunistically as Photek walks the raid. The 8 submap IDs are
-        -- confirmed via ATT's Instances.lua inst(1190) block. Sanctum
-        -- precedent: GetMapInfo(mapID).name returns the parent raid name
-        -- for every submap, so the dropdown label is the only authoritative
-        -- source. Maintain by hand.
-        --
-        -- Confirmed from Phase 1 recording (2026-04-21): 1735 contains
-        -- Shriekwing's room (first encounter after entry dialog).
-        [1734] = "TODO",
-        [1735] = "The Grand Walk",       -- Shriekwing, Huntsman Altimor, Hungering Destroyer, Sludgefist (confirmed 2026-04-21)
-        [1744] = "The Purloined Stores", -- Lady Inerva Darkvein (confirmed 2026-04-21)
-        [1745] = "Halls of the Faithful", -- Artificer Xy'mox (confirmed 2026-04-21)
-        [1746] = "Pride's Prison",       -- Sun King's Salvation (confirmed 2026-04-21)
-        [1747] = "Nightcloak Sanctum",   -- Stone Legion Generals, Sire Denathrius start (confirmed 2026-04-21)
-        [1748] = "The Observatorium",    -- Sire Denathrius end (auto-transition during encounter) (confirmed 2026-04-21)
-        [1750] = "Feast of Arrogance",   -- Council of Blood (confirmed 2026-04-21)
+        -- Sub-zone names match the in-game world-map dropdown. Castle
+        -- Nathria's API (C_Map.GetMapInfo) returns the parent raid name
+        -- for every sub-map rather than the dropdown label, so the
+        -- zone labels are maintained here by hand. The Observatorium
+        -- (1748) has no boss or route directly assigned to it; it's
+        -- declared because the Sire Denathrius encounter auto-
+        -- transitions the player's displayed map to it partway
+        -- through the fight.
+        [1735] = "The Grand Walk",
+        [1744] = "The Purloined Stores",
+        [1745] = "Halls of the Faithful",
+        [1746] = "Pride's Prison",
+        [1747] = "Nightcloak Sanctum",
+        [1748] = "The Observatorium",
+        [1750] = "Feast of Arrogance",
     },
 
-    -- CN weapon tokens, class-restricted. See header comment block for
-    -- the full mechanic explanation. Entries sourced from:
-    --   - Wowhead Castle Nathria weapon-token table
-    --   - TokenTransmogTooltips addon (Raids/CastleNathria/tokens.lua)
+    -- Weapon-token drops by boss. Sourced from the Wowhead Castle Nathria
+    -- token table and cross-referenced against TokenTransmogTooltips.
     --
-    -- Schema: `[tokenItemID] = bossIndex` for single-boss drops (most
-    -- tokens), OR `[tokenItemID] = { bossIndex, bossIndex, ... }` for
-    -- tokens that drop on multiple bosses. Sire Denathrius drops four
-    -- main-hand tokens (Mystic/Abominable/Venerated/Zenith) as a late-
-    -- raid backstop, and Stone Legion Generals drops both off-hand
-    -- tokens (Apogee/Thaumaturgic). We represent those as list values
-    -- so every boss that actually drops a token shows up in the
-    -- transmog popup's Weapon Tokens section.
+    -- Schema: `[tokenItemID] = bossIndex` for tokens that drop on a single
+    -- boss, OR `[tokenItemID] = { bossIndex, bossIndex, ... }` for tokens
+    -- that drop on multiple bosses. Sire Denathrius drops four main-hand
+    -- tokens (Mystic/Abominable/Venerated/Zenith) as a late-raid backstop,
+    -- and Stone Legion Generals drops both off-hand tokens. Single-boss
+    -- scalar values remain backward compatible for raids without multi-
+    -- boss token overlap (e.g. Sepulcher).
     --
     -- 12 rows total covering 6 families (lower/higher ilvl each). 8 of
     -- the 10 bosses drop weapon tokens; Shriekwing (index 1) and
     -- Sludgefist (index 8) do not.
-    --
-    -- Display/rendering of the weapons these tokens unlock depends on
-    -- static curated data not yet in this file (see note 3 above). For
-    -- now, tokenSources drives the Weapon Tokens section of the
-    -- transmog popup -- one inert row per token drop per boss, with
-    -- the token's item link and family/slot label.
     tierSets = {
-        labels = {},  -- intentionally empty: CN weapon tokens are not
-                      -- modeled via C_TransmogSets. Phase 3/4 may add a
-                      -- CN-specific label if a rendering path materializes.
+        labels = {},  -- Castle Nathria's weapon-token system predates the
+                      -- modern tier-set infrastructure, so no class tier
+                      -- labels apply here. The `tokenSources` block below
+                      -- drives the Weapon Tokens section of the transmog
+                      -- popup directly.
         tokenSources = {
             -- Main-Hand tokens
             -- Mystic (Druid, Hunter, Mage) -> Huntsman Altimor + Sire Denathrius
@@ -154,43 +104,27 @@ RetroRuns_Data[2296] = {
     -- Weapon-token appearance pools. Maps each pool to the set of
     -- transmog appearances (and their source IDs) that a player can
     -- unlock by redeeming a spherule/bead at the Covenant Sanctum
-    -- weaponsmith. Two slots (Main-Hand, Off-Hand) × two ilvl tiers
-    -- (lower, higher) × two difficulty contexts (non-mythic for
+    -- weaponsmith. Two slots (Main-Hand, Off-Hand) x two ilvl tiers
+    -- (lower, higher) x two difficulty contexts (non-mythic for
     -- LFR/N/H, mythic for M) = 8 pools total.
     --
-    -- Important shape note: all 4 MH token families (Mystic, Zenith,
-    -- Venerated, Abominable) redeem from the SAME underlying pool --
-    -- class-family is cosmetic at the unlock level, only the covenant
-    -- chosen at redemption time determines the weapon's visual theme.
-    -- Ditto both OH families (Apogee, Thaumaturgic) sharing one OH
-    -- pool. That's why we store per-slot pools rather than per-token:
-    -- per-token storage would duplicate every entry 2-4 times.
+    -- All four main-hand token families (Mystic, Zenith, Venerated,
+    -- Abominable) redeem from the same underlying pool; class family
+    -- is cosmetic at the unlock level, and only the covenant chosen
+    -- at redemption determines the weapon's visual theme. The two
+    -- off-hand families (Apogee, Thaumaturgic) share one off-hand
+    -- pool in the same way. That's why pools are stored per-slot
+    -- rather than per-token.
     --
     -- Schema: [appearanceID] = { sourceID, sourceID, ... }. An
-    -- appearance is "collected" if any listed sourceID is owned OR
-    -- if C_TransmogCollection.GetAppearanceInfoBySource(sourceID).
-    -- appearanceIsCollected returns true for any source (the global
-    -- cross-source check, matching CIMI's pattern -- a Hunter can
-    -- own a Mystic visual via a world-drop bow with the same look).
-    --
-    -- Pool counts (live API, 2026-04-22 harvest):
-    --   mainHandLowerNonMythic:  36 appearances, 43 sources
-    --   mainHandHigherNonMythic: 36 appearances, 43 sources
-    --   mainHandLowerMythic:     35 appearances, 42 sources
-    --   mainHandHigherMythic:    36 appearances, 44 sources
-    --   offHandLowerNonMythic:    8 appearances,  8 sources
-    --   offHandHigherNonMythic:   8 appearances,  8 sources
-    --   offHandLowerMythic:       8 appearances,  8 sources
-    --   offHandHigherMythic:      8 appearances,  8 sources
+    -- appearance is considered collected if any listed sourceID is
+    -- owned, or if the cross-source check returns collected for any
+    -- source (e.g. a Hunter who owns a Mystic-visual world-drop bow).
     --
     -- Data provenance: itemID seed list is derived from the
-    -- TokenTransmogTooltips addon's per-raid Wowhead-URL comments
-    -- (attributed in Harvester.lua:HarvestWeaponPools). The
-    -- (appearanceID, sourceID) bindings were harvested via
-    -- C_TransmogCollection.GetItemInfo on 2026-04-22 by /rr
-    -- weaponharvest, all 203 itemIDs resolved clean. Re-run the
-    -- command and cross-check against the previous output before
-    -- editing by hand.
+    -- TokenTransmogTooltips addon's per-raid Wowhead-URL comments.
+    -- The appearance/source bindings are resolved via
+    -- C_TransmogCollection.GetItemInfo at build time.
     weaponTokenPools = {
         mainHandLowerNonMythic = {
             [41247] = { 112361 },
@@ -386,27 +320,24 @@ RetroRuns_Data[2296] = {
     },
 
     -- Covenant Sanctum weapon-vendor zones. Used by the UI to hint where
-    -- the player should go to redeem Anima Spherules/Beads for weapons.
-    -- Keyed by C_Covenants.GetActiveCovenantID() return value:
+    -- the player should redeem Anima Spherules/Beads for weapons. Keyed
+    -- by C_Covenants.GetActiveCovenantID() return value:
     --   1 = Kyrian, 2 = Venthyr, 3 = Night Fae, 4 = Necrolord.
-    -- We intentionally don't name specific vendor NPCs: Wowhead's vendor
-    -- list had data errors (same NPC names repeated across covenants) so
-    -- we stick with covenant + zone, which is authoritative. Each covenant
-    -- has 4 weapon vendors (one per difficulty tier) inside the Sanctum;
-    -- all 4 offer identical inventories (confirmed 2026-04-22 via /rr
-    -- vendorscan on all 4 Kyrian vendors). So directing the player to
-    -- the zone is sufficient.
+    --
+    -- Each covenant's Sanctum has multiple weapon vendors (one per
+    -- difficulty tier) with identical inventories, so directing the
+    -- player to the covenant's zone is sufficient; specific NPC names
+    -- are not listed.
     --
     -- Fields:
-    --   covenantName    -- display name, colored with covenantColor.
-    --   covenantColor   -- WoW color escape in AARRGGBB hex (no "|c" prefix).
-    --                      These match the in-game covenant theme colors
-    --                      (Kyrian=blue, Venthyr=red, Night Fae=purple,
-    --                      Necrolord=green). Approximations; tune in-game
-    --                      if they clash with Photek's expectation.
-    --   zoneMain        -- zone name (Bastion, Revendreth, etc.), colored
-    --                      with covenantColor.
-    --   zoneSub         -- subzone/Sanctum name (Elysian Hold, Sinfall),
+    --   covenantName    -- display name, rendered in covenantColor.
+    --   covenantColor   -- WoW color escape in AARRGGBB hex (no "|c"
+    --                      prefix). Matches the in-game covenant theme
+    --                      (Kyrian blue, Venthyr red, Night Fae purple,
+    --                      Necrolord green).
+    --   zoneMain        -- zone name (Bastion, Revendreth, etc.), rendered
+    --                      in covenantColor.
+    --   zoneSub         -- Sanctum name (Elysian Hold, Sinfall, etc.),
     --                      rendered in white for visual separation.
     weaponVendors = {
         [1] = {  -- Kyrian (blue)
@@ -441,7 +372,7 @@ RetroRuns_Data[2296] = {
             name               = "Shriekwing",
             journalEncounterID = 2393,
             mapID              = 1735,
-            coord              = { 0.571, 0.807 },  -- From /rr record dump 2026-04-21
+            coord              = { 0.571, 0.807 },
             aliases            = {},
             soloTip            = "Standard Nuke",
             achievements       = {
@@ -461,7 +392,7 @@ RetroRuns_Data[2296] = {
             name               = "Huntsman Altimor",
             journalEncounterID = 2429,
             mapID              = 1735,
-            coord              = { 0.674, 0.531 },  -- From /rr record dump 2026-04-21
+            coord              = { 0.674, 0.531 },
             aliases            = { "Altimor" },
             soloTip            = "Standard Nuke",
             achievements       = {
@@ -480,7 +411,7 @@ RetroRuns_Data[2296] = {
             name               = "Sun King's Salvation",
             journalEncounterID = 2422,
             mapID              = 1746,
-            coord              = { 0.528, 0.648 },  -- From /rr record dump 2026-04-21
+            coord              = { 0.528, 0.648 },
             aliases            = { "Sun King", "Kael'thas" },
             soloTip            = "You have to heal Kael to win this fight. If you don't have an ability to heal others, you will need to bring bandages. Kill adds, and heal Kael when you get the chance.",
             achievements       = {
@@ -500,7 +431,7 @@ RetroRuns_Data[2296] = {
             name               = "Artificer Xy'mox",
             journalEncounterID = 2418,
             mapID              = 1745,
-            coord              = { 0.652, 0.280 },  -- From /rr record dump 2026-04-21
+            coord              = { 0.652, 0.280 },
             aliases            = { "Xy'mox" },
             soloTip            = "Standard Nuke",
             achievements       = {
@@ -519,7 +450,7 @@ RetroRuns_Data[2296] = {
             name               = "Hungering Destroyer",
             journalEncounterID = 2428,
             mapID              = 1735,
-            coord              = { 0.383, 0.348 },  -- From /rr record dump 2026-04-21
+            coord              = { 0.383, 0.348 },
             aliases            = { "Destroyer" },
             soloTip            = "Standard Nuke",
             achievements       = {
@@ -541,7 +472,7 @@ RetroRuns_Data[2296] = {
             name               = "Lady Inerva Darkvein",
             journalEncounterID = 2420,
             mapID              = 1744,
-            coord              = { 0.387, 0.443 },  -- From /rr record dump 2026-04-21
+            coord              = { 0.387, 0.443 },
             aliases            = { "Inerva", "Darkvein" },
             soloTip            = "Standard Nuke",
             achievements       = {
@@ -560,7 +491,7 @@ RetroRuns_Data[2296] = {
             name               = "The Council of Blood",
             journalEncounterID = 2426,
             mapID              = 1750,
-            coord              = { 0.671, 0.542 },  -- From /rr record dump 2026-04-21
+            coord              = { 0.671, 0.542 },
             aliases            = { "Council of Blood", "Council" },
             soloTip            = "Nuke down the bosses. During dance phase, run to the spotlight and get ready. Just walk in the direction of the other dancers 4-5 times and the phase will end. If you kill the bosses fast enough, you can skip the dance phase.\nMythic only: while dancing, keep jumping! You must do this to clear a debuff or you will die.",
             achievements       = {
@@ -581,7 +512,7 @@ RetroRuns_Data[2296] = {
             name               = "Sludgefist",
             journalEncounterID = 2394,
             mapID              = 1735,
-            coord              = { 0.633, 0.806 },  -- From /rr record dump 2026-04-21
+            coord              = { 0.633, 0.806 },
             aliases            = {},
             soloTip            = "Standard Nuke",
             achievements       = {
@@ -603,7 +534,7 @@ RetroRuns_Data[2296] = {
             name               = "Stone Legion Generals",
             journalEncounterID = 2425,
             mapID              = 1747,
-            coord              = { 0.292, 0.482 },  -- From /rr record dump 2026-04-21
+            coord              = { 0.292, 0.482 },
             aliases            = { "Stone Legion", "SLG", "Generals" },
             soloTip            = "Kill the trash and approach the bosses to start the encounter. Walk over anima orbs to collect them, and bring them to Prince Renathal to free him (x2). When he's free, attack the bosses. If you kill the bosses fast enough, you can skip this mechanic.",
             achievements       = {
@@ -623,23 +554,22 @@ RetroRuns_Data[2296] = {
             name               = "Sire Denathrius",
             journalEncounterID = 2424,
             mapID              = 1747,
-            coord              = { 0.492, 0.520 },  -- From /rr record dump 2026-04-21
+            coord              = { 0.492, 0.520 },
             aliases            = { "Denathrius", "Sire" },
             soloTip            = "Standard Nuke",
             achievements       = {
                 { id = 14610, name = "Clear Conscience", meta = true },
             },
-            -- Denathrius drops ONLY 4 armor items via the Encounter Journal
-            -- (verified 2026-04-21 via /rr ejdiff 2424 list — EJ reports
-            -- 85 total items, 4 armor + 4 spherules + 1 ring + 4 trinkets
-            -- + 12 legendary memories + 60 conduits). ATT's Instances.lua
-            -- file previously indicated 13 armor items attributed to
-            -- encID 2424, but 9 of those 13 don't appear in the live EJ
-            -- — ATT appears to have stale pre-patch data for this boss.
-            -- The 4 below ARE the complete armor drop set. Not tracked
-            -- here: the ring, trinkets, conduits, and memories — schema
-            -- currently only covers per-class armor/weapons. If we ever
-            -- add non-armor tracking, this boss will need to be revisited.
+            -- Sire Denathrius drops only 4 armor items via the Encounter
+            -- Journal (plus 4 weapon-token spherules, a ring, 4 trinkets,
+            -- 12 legendary memories, and 60 conduits). Other data sources
+            -- (e.g. AllTheThings' Instances.lua) have historically listed
+            -- up to 13 armor items for this encounter -- those entries
+            -- reflect pre-patch data that no longer matches the live EJ.
+            -- The 4 items below are the complete armor drop set. The
+            -- ring, trinkets, conduits, and memories are not tracked
+            -- here because the schema currently only covers per-class
+            -- armor and weapons.
             loot = {
                 { id = 182997, slot = "Head",     name = "Diadem of Imperious Desire", sources = { [17]=115242, [14]=114510, [15]=115243, [16]=115244 } },
                 { id = 182980, slot = "Head",     name = "Sadist's Sinister Mask",     sources = { [17]=115146, [14]=114493, [15]=115147, [16]=115148 } },
@@ -653,8 +583,8 @@ RetroRuns_Data[2296] = {
     routing = {
 
         -- 1. Shriekwing
-        -- Recorded 2026-04-21 via /rr record. Entry dialog plays on
-        -- arrival in the first room; walk in, watch dialog, engage.
+        -- Entry dialog plays on arrival in the first room; walk in,
+        -- watch the dialog, engage.
         {
             step      = 1,
             priority  = 1,
@@ -675,9 +605,9 @@ RetroRuns_Data[2296] = {
         },
 
         -- 2. Huntsman Altimor
-        -- Recorded 2026-04-21 via /rr record. Linear walk north from
-        -- Shriekwing's room; General Draven opens a gate after you
-        -- clear trash. No teleport; all one mapID.
+        -- Linear walk north from Shriekwing's room; General Draven
+        -- opens a gate after the player clears trash. No teleport;
+        -- all one mapID.
         {
             step      = 2,
             priority  = 2,
@@ -710,9 +640,9 @@ RetroRuns_Data[2296] = {
         },
 
         -- 5. Hungering Destroyer
-        -- Recorded 2026-04-21 via /rr record. Path leads to a small
-        -- back room where NPCs stand next to a sewer drop; jump into
-        -- the sewer to descend to the Destroyer's room.
+        -- Path leads to a small back room where NPCs stand next to a
+        -- sewer drop; jump into the sewer to descend to the Destroyer's
+        -- room.
         {
             step      = 3,
             priority  = 3,
@@ -743,10 +673,10 @@ RetroRuns_Data[2296] = {
         },
 
         -- 6. Lady Inerva Darkvein
-        -- Recorded 2026-04-21 via /rr record. First multi-segment route
-        -- in CN: stairs transition player from The Grand Walk (1735)
-        -- to The Purloined Stores (1744). No teleport; natural floor
-        -- transition as the player walks up stairs.
+        -- First multi-submap route in CN: stairs transition the player
+        -- from The Grand Walk (1735) to The Purloined Stores (1744).
+        -- No teleport; natural floor transition as the player walks
+        -- up stairs.
         {
             step      = 4,
             priority  = 4,
@@ -780,24 +710,20 @@ RetroRuns_Data[2296] = {
         },
 
         -- 3. Sun King's Salvation
-        -- Recorded 2026-04-21 via /rr record. 4-segment route spanning
-        -- 4 submaps. After clearing the Catacombs wing (Altimor ->
-        -- Destroyer -> Inerva), General Draven escorts the player back
-        -- to the raid entrance in The Grand Walk to begin the Royal
-        -- Quarters wing.
+        -- 4-segment route spanning 4 submaps. After clearing the
+        -- Catacombs wing (Altimor -> Destroyer -> Inerva), General
+        -- Draven escorts the player back to the raid entrance in
+        -- The Grand Walk to begin the Royal Quarters wing.
         --
-        -- `requires = {6}` (Lady Inerva) rather than `{1}` (Shriekwing)
-        -- per the DAG. Blizzard's encounter DAG only strictly gates Sun
-        -- King on Shriekwing, so either would be "correct" vs. the game.
-        -- But the Boss Progress panel colors bosses differently based
-        -- on available-vs-active-vs-locked state, and a "{1}" declaration
-        -- makes Sun King render as "available" (white) the entire way
-        -- through the Altimor/Destroyer/Inerva clears -- which reads to
-        -- the player as "you're forgetting a boss." Declaring {6}
-        -- encodes our route order explicitly: Sun King becomes the
-        -- next target immediately after Inerva dies, matching the
-        -- physical path we've recorded. Fixed 2026-04-22 after Photek's
-        -- final CN walkthrough surfaced the white-state visual.
+        -- `requires = { 6 }` (Lady Inerva) rather than `{ 1 }`
+        -- (Shriekwing). Blizzard's encounter DAG only strictly gates
+        -- Sun King on Shriekwing, but the Boss Progress panel colors
+        -- bosses based on available-vs-locked state: declaring `{ 1 }`
+        -- would mark Sun King as "available" (white) for the entire
+        -- Altimor -> Destroyer -> Inerva clear, which reads as "you're
+        -- forgetting a boss" to the player. `{ 6 }` encodes the actual
+        -- route order, so Sun King becomes the next target immediately
+        -- after Inerva.
         {
             step      = 5,
             priority  = 5,
@@ -865,9 +791,9 @@ RetroRuns_Data[2296] = {
         },
 
         -- 4. Artificer Xy'mox
-        -- Recorded 2026-04-21 via /rr record. Back down the stairs from
-        -- Pride's Prison, then around the Halls of the Faithful perimeter.
-        -- Prince Renathal opens the gate after trash clear.
+        -- Back down the stairs from Pride's Prison, then around the
+        -- Halls of the Faithful perimeter. Prince Renathal opens the
+        -- gate after trash clear.
         {
             step      = 6,
             priority  = 6,
@@ -907,10 +833,9 @@ RetroRuns_Data[2296] = {
         },
 
         -- 7. The Council of Blood
-        -- Recorded 2026-04-21 via /rr record. Backtrack from Xy'mox's
-        -- room, then stairs transition into Feast of Arrogance (1750).
-        -- Final boss of the Royal Quarters wing. Gated by Sun King AND
-        -- Xy'mox per the DAG.
+        -- Backtrack from Xy'mox's room, then stairs transition into
+        -- Feast of Arrogance (1750). Final boss of the Royal Quarters
+        -- wing. Gated by Sun King AND Xy'mox per the DAG.
         {
             step      = 7,
             priority  = 7,
@@ -945,14 +870,14 @@ RetroRuns_Data[2296] = {
         },
 
         -- 8. Sludgefist
-        -- Recorded 2026-04-21 via /rr record. 3-segment route: back to
-        -- Halls of the Faithful, walk to Prince Renathal's mirror
-        -- teleporter (shortcut back to The Grand Walk), then to where
-        -- Shriekwing was. Sludgefist jumps down after NPC dialog.
-        -- Note: the mirror teleport between segments 2 and 3 is
-        -- implicit (modeled as path-ending-at-mirror, path-starting-in-
-        -- destination-map) rather than an explicit teleport segment,
-        -- because it's a single-destination mirror, not a selector.
+        -- 3-segment route: back to Halls of the Faithful, walk to
+        -- Prince Renathal's mirror teleporter (shortcut back to The
+        -- Grand Walk), then to where Shriekwing was. Sludgefist jumps
+        -- down after NPC dialog. The mirror teleport between segments
+        -- 2 and 3 is implicit (modeled as path-ending-at-mirror,
+        -- path-starting-in-destination-map) rather than an explicit
+        -- teleport segment, because it's a single-destination mirror,
+        -- not a selector.
         {
             step      = 8,
             priority  = 8,
@@ -996,9 +921,8 @@ RetroRuns_Data[2296] = {
         },
 
         -- 9. Stone Legion Generals
-        -- Recorded 2026-04-21 via /rr record. Mirror teleport from The
-        -- Grand Walk (behind Sludgefist) lands in Nightcloak Sanctum
-        -- (1747), then walk to the bosses.
+        -- Mirror teleport from The Grand Walk (behind Sludgefist) lands
+        -- in Nightcloak Sanctum (1747), then a short walk to the bosses.
         {
             step      = 9,
             priority  = 9,
@@ -1034,17 +958,15 @@ RetroRuns_Data[2296] = {
         },
 
         -- 10. Sire Denathrius
-        -- Recorded 2026-04-21 via /rr record. Short walk from SLG's
-        -- room to Denathrius within the same submap (Nightcloak
-        -- Sanctum, 1747).
+        -- Short walk from the Stone Legion Generals' room to Denathrius
+        -- within the same submap (Nightcloak Sanctum, 1747).
         --
-        -- Note: the encounter auto-transitions the player to a second
-        -- submap called "The Observatorium" (mapID 1748) partway
-        -- through the fight. This is not a travel step -- no player
-        -- navigation needed. Recording captured one Observatorium
-        -- coord post-fight ({ 0.486, 0.597 } on mapID 1748) which we
-        -- retain here for reference in case future logic (e.g. the
-        -- recorder's post-encounter teleport-out path) needs it.
+        -- The encounter auto-transitions the player to a second submap
+        -- called "The Observatorium" (mapID 1748) partway through the
+        -- fight. This is not a travel step -- no player navigation is
+        -- required. One Observatorium coord ({ 0.486, 0.597 } on mapID
+        -- 1748) is retained here for reference in case future logic
+        -- (e.g. post-encounter teleport-out paths) needs it.
         {
             step      = 10,
             priority  = 10,

@@ -268,15 +268,12 @@ RetroRuns_Data[2450] = {
             name               = "Sylvanas Windrunner",
             journalEncounterID = 2441,
             mapID              = 2002,
-            -- mapID 2002 ("Pinnacle of Domination") is verified live
-            -- (Photek 2026-04-21, /rr status). It's a display-only map:
-            -- C_Map.GetPlayerMapPosition(2002, "player") returns nil,
-            -- meaning Blizzard treats it as a single-platform encounter
-            -- arena with no positional coordinate space. The {0.5, 0.5}
-            -- coord is therefore a permanent placeholder, not a "to be
-            -- refined later" approximation. There is no other coord to
-            -- measure. Don't try to "fix" this with /rr status -- the API
-            -- has no value to give.
+            -- The Pinnacle of Domination (mapID 2002) is a display-only
+            -- arena map: C_Map.GetPlayerMapPosition returns nil for it,
+            -- meaning Blizzard treats the encounter as a single platform
+            -- with no positional coordinate space. The {0.5, 0.5} coord
+            -- is a permanent centered placeholder, not an approximation
+            -- to be refined.
             coord              = { 0.500, 0.500 },
             aliases            = { "Sylvanas" },
             soloTip            = "Standard Nuke.",
@@ -289,18 +286,13 @@ RetroRuns_Data[2450] = {
                 { id = 186353, slot = "Feet", name = "Greaves of Haunting Ruination", sources = { [17]=145857, [14]=145856, [15]=145858, [16]=145859 } },
                 { id = 186325, slot = "Head", name = "Veil of the Banshee Queen", sources = { [17]=145753, [14]=145752, [15]=145754, [16]=145755 } },
                 { id = 186417, slot = "Off-hand", name = "Guard of the Sundered Defender", sources = { [17]=146653, [14]=145991, [15]=146654, [16]=145992 } },
-                -- Rae'shalare and Edge of Night below are unified-visual
-                -- items: ATT records them with bonusID variants rather
-                -- than modID (per-difficulty) variants. The live API
-                -- confirms all sourceIDs share one visualID; the in-game
-                -- Wardrobe shows ONE appearance, not four. Encoded as
-                -- binary (one source cloned across buckets) so the UI
-                -- renders them as `[ check ]` brackets matching the
-                -- Wardrobe's representation. /rr tmogtest 186414 returned
-                -- 4 sources (145985, 145986, 146520, 146521) all under
-                -- visualID 43276; we use 145986 as the representative
-                -- because it's the most common drop variant (Normal-
-                -- tagged in modID terms).
+                -- Rae'shalare (ranged) and Edge of Night (weapon) are
+                -- unified-visual items: all four difficulty sources share
+                -- a single visualID, so the in-game Wardrobe shows one
+                -- appearance, not four. Encoded here as binary (one
+                -- source cloned across all difficulty buckets) so the
+                -- UI renders them as a single-state `[ check ]` pair
+                -- matching the Wardrobe's representation.
                 { id = 186414, slot = "Ranged", name = "Rae'shalare, Death's Whisper", sources = { [17]=145986, [14]=145986, [15]=145986, [16]=145986 } },
                 { id = 186342, slot = "Shoulder", name = "Epaulets of the Master Ranger", sources = { [17]=145813, [14]=145812, [15]=145814, [16]=145815 } },
                 { id = 186349, slot = "Shoulder", name = "Spires of Broken Hope", sources = { [17]=145841, [14]=145840, [15]=145842, [16]=145843 } },
