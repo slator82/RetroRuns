@@ -5,6 +5,8 @@ by the CurseForge packager and used as the public release notes.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-04-23
+
 ### Changed
 
 - Transmog browser dropdown labels (expansion / raid / boss) now
@@ -26,6 +28,14 @@ by the CurseForge packager and used as the public release notes.
   after transitioning from an in-raid state. Previously the header
   could silently disappear due to a layout geometry issue when
   adjacent text fields were empty.
+
+### Infrastructure
+
+- Added CHANGELOG.md and .pkgmeta so CurseForge release notes are
+  hand-written going forward instead of being auto-generated from
+  git log output.
+- Support email (retroruns.support@gmail.com) added to README contact
+  list.
 
 ## [0.5.1] - 2026-04-23
 
