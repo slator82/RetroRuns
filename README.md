@@ -58,7 +58,7 @@ Main commands — type in chat:
 
 ## Status
 
-Version **0.5.0** — release candidate for v1.0.
+Version **0.5.2** — release candidate for v1.0.
 
 All three Shadowlands raids are feature-complete with full routing, encounter notes, armor transmog tracking, weapon-token indicators, and achievement callouts. Data integrity has been verified via the addon's own `/rr tmogverify` command: zero errors across 293 items and 31 bosses.
 
@@ -68,6 +68,7 @@ A few ways to reach me, in rough order of preference:
 
 * **GitHub issues** — [github.com/slator82/RetroRuns/issues](https://github.com/slator82/RetroRuns/issues). Best for bug reports and feature requests; keeps everything searchable.
 * **CurseForge comments** — the comments section on the addon's CurseForge page.
+* **Email** — [retroruns.support@gmail.com](mailto:retroruns.support@gmail.com). Good for private reports, or anything that doesn't fit a public forum.
 * **Discord** — if we're in the same server, feel free to ping me directly.
 
 When reporting a bug, the following info helps:

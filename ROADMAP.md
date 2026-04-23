@@ -1,6 +1,6 @@
 # RetroRuns — Roadmap & Feature Tracker
 
-## Current Version: 0.5.0 (Alpha — v1.0 release candidate)
+## Current Version: 0.5.2 (Beta — v1.0 release candidate)
 
 ---
 
