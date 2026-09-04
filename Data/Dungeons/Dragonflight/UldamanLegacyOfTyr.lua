@@ -12,7 +12,14 @@ RetroRuns_DungeonData[1197] = {
     name              = "Uldaman: Legacy of Tyr",
     expansion         = "Dragonflight",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "10.0.2",
+
+    entrance = {
+        mapID = 15,
+        x     = 0.4087,
+        y     = 0.1023,
+    },
 
     gloryMeta = {
         id   = 16295,
@@ -42,7 +49,7 @@ RetroRuns_DungeonData[1197] = {
             name               = "Bromach",
             journalEncounterID = 2487,
             achievements       = {
-                { id = 16337, name = "It's a Trogg Eat Trogg World", meta = true },
+                { id = 16337, name = "It's a Trogg Eat Trogg World", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 193818, slot = "Hands", name = "Rock Shovelers", sources = { [14]=180874, [15]=180874, [16]=180874 } },
@@ -57,7 +64,7 @@ RetroRuns_DungeonData[1197] = {
             name               = "Sentinel Talondras",
             journalEncounterID = 2484,
             achievements       = {
-                { id = 16282, name = "No, You're Stunning!", meta = true },
+                { id = 16282, name = "No, You're Stunning!", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 193806, slot = "Feet", name = "Ancient Crosswrapped Sandals", sources = { [14]=180904, [15]=180904, [16]=180904 } },
@@ -85,10 +92,7 @@ RetroRuns_DungeonData[1197] = {
             name               = "Chrono-Lord Deios",
             journalEncounterID = 2479,
             achievements       = {
-                { id = 16278, name = "Uldaman: Legacy of Tyr" },
-                { id = 16279, name = "Heroic: Uldaman: Legacy of Tyr" },
-                { id = 16280, name = "Mythic: Uldaman: Legacy of Tyr" },
-                { id = 16281, name = "Like Sands Through the Hourglass", meta = true },
+                { id = 16281, name = "Like Sands Through the Hourglass", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 193801, slot = "Chest", name = "Fatebound Chainmail", sources = { [14]=180901, [15]=180901, [16]=180901 } },

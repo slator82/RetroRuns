@@ -506,7 +506,7 @@ end
 
 -- Full-opacity hold (seconds) from toasterDuration, clamped 1.5..8.0.
 local function EffectiveHold()
-    local duration = (RR.GetSetting and RR:GetSetting("toasterDuration", 3.0)) or 3.0
+    local duration = (RR.GetSetting and RR:GetSetting("toasterDuration", 5.0)) or 5.0
     if duration < 1.5 then duration = 1.5 elseif duration > 8.0 then duration = 8.0 end
     return duration
 end
@@ -559,7 +559,7 @@ local function RestoreClassFilterOnHide()
     local restoreTo = pendingClassFilterRestore
     pendingClassFilterRestore = nil
     if C_TransmogCollection and C_TransmogCollection.SetClassFilter then
-        pcall(C_TransmogCollection.SetClassFilter, restoreTo)
+        C_TransmogCollection.SetClassFilter(restoreTo)
     end
 end
 
@@ -603,9 +603,8 @@ local function ClassCanViewVisual(visualID, classID)
         and C_TransmogCollection.GetValidAppearanceSourcesForClass) then
         return true   -- can't check -> don't block the normal open
     end
-    local ok, sources = pcall(
-        C_TransmogCollection.GetValidAppearanceSourcesForClass, visualID, classID)
-    if not ok then return true end   -- API changed -> fall back to normal open
+    local sources = C_TransmogCollection.GetValidAppearanceSourcesForClass(
+        visualID, classID)
     return sources ~= nil and #sources > 0
 end
 
@@ -660,8 +659,7 @@ end
 
 local function DataClassesForSource(sourceID)
     if not sourceClassIndex then
-        local ok = pcall(BuildSourceClassIndex)
-        if not ok then sourceClassIndex = {} end
+        BuildSourceClassIndex()
     end
     return sourceClassIndex[sourceID]
 end
@@ -679,30 +677,27 @@ local FALLBACK_CATEGORY_SLOTS = {
 }
 
 local function LocationForCategory(categoryID)
+    if not categoryID then return nil end
     if not (TransmogUtil and TransmogUtil.GetTransmogLocation and Enum) then
         return nil
     end
     local slot
     if CollectionWardrobeUtil and CollectionWardrobeUtil.GetSlotFromCategoryID then
-        local okSlot, resolved = pcall(
-            CollectionWardrobeUtil.GetSlotFromCategoryID, categoryID)
-        if okSlot then slot = resolved end
+        slot = CollectionWardrobeUtil.GetSlotFromCategoryID(categoryID)
     end
     slot = slot or FALLBACK_CATEGORY_SLOTS[categoryID]
     -- GetSlotFromCategoryID doesn't cover weapon types. Shields report false
     -- for both hand flags, so anything without main hand takes secondary.
     if not slot then
-        local okInfo, name, isWeapon, _, canMainHand =
-            pcall(C_TransmogCollection.GetCategoryInfo, categoryID)
-        if okInfo and name and isWeapon then
+        local name, isWeapon, _, canMainHand =
+            C_TransmogCollection.GetCategoryInfo(categoryID)
+        if name and isWeapon then
             slot = canMainHand and "MAINHANDSLOT" or "SECONDARYHANDSLOT"
         end
     end
     if not slot then return nil end
-    local okLoc, location = pcall(TransmogUtil.GetTransmogLocation, slot,
+    return TransmogUtil.GetTransmogLocation(slot,
         Enum.TransmogType.Appearance, false)
-    if okLoc and location then return location end
-    return nil
 end
 
 -- Can the standard jump reach this category for this character? Armor always;
@@ -728,9 +723,8 @@ local function CategoryNavigableForPlayer(categoryID)
         return true, "armor slot"
     end
 
-    local okInfo, name, isWeapon, _, canMainHand, canOffHand =
-        pcall(C_TransmogCollection.GetCategoryInfo, categoryID)
-    if not okInfo then return nil, "err" end
+    local name, isWeapon, _, canMainHand, canOffHand =
+        C_TransmogCollection.GetCategoryInfo(categoryID)
     if name == nil or name == "" then
         return false, ("unnamed%s"):format(fromClient and "" or " (range guessed)")
     end
@@ -761,10 +755,9 @@ local navPlan = nil
 local function ClassOfferedCategory(categoryID, currentFilter)
     for classID = 1, NUM_CLASSES do
         if classID ~= currentFilter then
-            pcall(C_TransmogCollection.SetClassFilter, classID)
-            local okInfo, name = pcall(
-                C_TransmogCollection.GetCategoryInfo, categoryID)
-            if okInfo and name and name ~= "" then
+            C_TransmogCollection.SetClassFilter(classID)
+            local name = C_TransmogCollection.GetCategoryInfo(categoryID)
+            if name and name ~= "" then
                 T(("crossclass: category %d offered to class %d (%s)")
                     :format(categoryID, classID, name))
                 return classID
@@ -776,9 +769,8 @@ end
 
 local function CategoryForSource(sourceID)
     if not C_TransmogCollection.GetAppearanceSourceInfo then return nil end
-    local okResolve, resolved = pcall(
-        C_TransmogCollection.GetAppearanceSourceInfo, sourceID)
-    if okResolve and resolved then return resolved.category end
+    local resolved = C_TransmogCollection.GetAppearanceSourceInfo(sourceID)
+    if resolved then return resolved.category end
     return nil
 end
 
@@ -806,19 +798,20 @@ local function PlayerCanBrowseSource(sourceID)
     end
     -- Against the player's own class. Failures route to direct navigation.
     local _, _, playerClassID = UnitClass("player")
-    local okFilter, originalFilter = pcall(C_TransmogCollection.GetClassFilter)
-    if not okFilter or originalFilter == nil then
+    local originalFilter = C_TransmogCollection.GetClassFilter
+        and C_TransmogCollection.GetClassFilter()
+    if originalFilter == nil then
         T("guard: allow (no class filter available)")
         return true
     end
     local restoreNeeded = false
     if playerClassID and originalFilter ~= playerClassID then
-        pcall(C_TransmogCollection.SetClassFilter, playerClassID)
+        C_TransmogCollection.SetClassFilter(playerClassID)
         restoreNeeded = true
     end
     local offered, detail = CategoryNavigableForPlayer(categoryID)
     if restoreNeeded then
-        pcall(C_TransmogCollection.SetClassFilter, originalFilter)
+        C_TransmogCollection.SetClassFilter(originalFilter)
     end
     T(("guard: category=%d ownClass=%s offered=%s (%s)"):format(
         categoryID, tostring(playerClassID), tostring(offered),
@@ -829,7 +822,7 @@ local function PlayerCanBrowseSource(sourceID)
     -- GoToSourceID with the category's own location and the force flag
     -- bypasses Blizzard's silent substitution.
     local target = ClassOfferedCategory(categoryID, originalFilter)
-    pcall(C_TransmogCollection.SetClassFilter, originalFilter)
+    C_TransmogCollection.SetClassFilter(originalFilter)
     if not target then
         T(("guard: refuse (no class is offered category %d)"):format(categoryID))
         return false, "class"
@@ -884,8 +877,9 @@ local function RetargetClassFilterForSource(sourceID)
     local visualID = VisualIDForSource(sourceID)
     if not visualID then return false end
 
-    local okFilter, currentFilter = pcall(C_TransmogCollection.GetClassFilter)
-    if not okFilter or currentFilter == nil then return false end
+    local currentFilter = C_TransmogCollection.GetClassFilter
+        and C_TransmogCollection.GetClassFilter()
+    if currentFilter == nil then return false end
 
     -- Our data first, where it has an answer. A row listing the classes that
     -- can use the drop settles which filter to browse under, and is trusted
@@ -909,7 +903,7 @@ local function RetargetClassFilterForSource(sourceID)
             if pendingClassFilterRestore == nil then
                 pendingClassFilterRestore = currentFilter
             end
-            pcall(C_TransmogCollection.SetClassFilter, target)
+            C_TransmogCollection.SetClassFilter(target)
             RefreshClassDropdownLabel()
             return true
         end
@@ -930,7 +924,7 @@ local function RetargetClassFilterForSource(sourceID)
             if pendingClassFilterRestore == nil then
                 pendingClassFilterRestore = currentFilter
             end
-            pcall(C_TransmogCollection.SetClassFilter, classID)
+            C_TransmogCollection.SetClassFilter(classID)
             RefreshClassDropdownLabel()
             return true
         end
@@ -958,6 +952,16 @@ local function RefreshItemsCollectionAfterFilterChange()
 end
 
 local function OpenToastInJournal(toastFrame)
+    -- Every path below ends in a Blizzard call that toggles the Collections
+    -- journal, and that journal's tabs are protected: called in combat it
+    -- blocks on MountJournal:SetShown() and blames this addon. The block
+    -- surfaces LATER, on some unrelated protected action, so the click that
+    -- caused it is long gone by the time anything looks wrong.
+    if InCombatLockdown and InCombatLockdown() then
+        T("open: refused -- in combat")
+        ShowToastHint(toastFrame, RR.L["Browse locked in combat"])
+        return true
+    end
     if toastFrame.sourceID then
         -- An appearance the wardrobe won't navigate to for this character
         -- has no page to open, so a normal click would strand the player on
@@ -994,15 +998,14 @@ local function OpenToastInJournal(toastFrame)
                     -- weapon-category slots resolve from GetCategoryInfo,
                     -- which only answers under a filter whose class can use
                     -- the category.
-                    local okFilter, currentFilter =
-                        pcall(C_TransmogCollection.GetClassFilter)
+                    local currentFilter = C_TransmogCollection.GetClassFilter
+                        and C_TransmogCollection.GetClassFilter()
                     local filterSwitched = false
-                    if okFilter and currentFilter
-                        and currentFilter ~= plan.classID then
+                    if currentFilter and currentFilter ~= plan.classID then
                         if pendingClassFilterRestore == nil then
                             pendingClassFilterRestore = currentFilter
                         end
-                        pcall(C_TransmogCollection.SetClassFilter, plan.classID)
+                        C_TransmogCollection.SetClassFilter(plan.classID)
                         filterSwitched = true
                     end
                     local location = LocationForCategory(plan.categoryID)
@@ -1437,7 +1440,7 @@ local function BuildUnlockOverlay()
         toast:EnableMouse(false)
         toast:SetFrameStrata(overlay:GetFrameStrata())
         toast:SetFrameLevel(overlay:GetFrameLevel() + 1)
-        local nm = (s.name and GetItemInfo and GetItemInfo(s.name)) or ""
+        local nm = (s.name and GetItemInfo and C_Item.GetItemInfo(s.name)) or ""
         ApplyContent(toast, { icon = s.icon, name = nm, quality = 4,
                           glowColor = (s.header == "New Appearance") and GLOW_PINK or nil,
                           isAppearance = s.isAppearance, isSpecial = s.isSpecial,
@@ -1450,10 +1453,10 @@ local function BuildUnlockOverlay()
             local waiter = CreateFrame("Frame")
             waiter:RegisterEvent("GET_ITEM_INFO_RECEIVED")
             waiter:SetScript("OnEvent", function(self)
-                local itemName = GetItemInfo(itemID)
+                local itemName = C_Item.GetItemInfo(itemID)
                 if itemName then frame.itemNameText:SetText(itemName); self:UnregisterAllEvents() end
             end)
-            GetItemInfo(itemID)
+            C_Item.GetItemInfo(itemID)
         end
         if toast.glowOn and toast.glow then
             local glow = toast.glowColor or GLOW_PINK
@@ -1610,8 +1613,7 @@ local function ResolveSpecialLoot(event, id)
             -- Mounts link via their summon spell.
             local link
             if spellID then
-                link = (C_Spell and C_Spell.GetSpellLink and C_Spell.GetSpellLink(spellID))
-                    or (GetSpellLink and GetSpellLink(spellID))
+                link = C_Spell.GetSpellLink(spellID)
             end
             return name, icon, nil, "Mount", link
         end
@@ -1784,8 +1786,9 @@ local function OnDropEvent(_, event, ...)
         -- icon(4) isCollected(5) itemLink(6). Keep itemLink(6) for the chat.
         local srcIcon, srcLink, visualID
         if C_TransmogCollection and C_TransmogCollection.GetAppearanceSourceInfo then
-            local ok, _, vID, _, icon, _, itemLink = pcall(C_TransmogCollection.GetAppearanceSourceInfo, sourceID)
-            if ok then visualID = vID; srcIcon = icon; srcLink = itemLink end
+            local _, vID, _, icon, _, itemLink =
+                C_TransmogCollection.GetAppearanceSourceInfo(sourceID)
+            visualID = vID; srcIcon = icon; srcLink = itemLink
         end
 
         -- Dedupe by visualID: toast only the first source seen per visual this
@@ -1803,8 +1806,8 @@ local function OnDropEvent(_, event, ...)
         -- we enrich the visible toast in place once it loads.
         local itemID
         if C_TransmogCollection and C_TransmogCollection.GetSourceInfo then
-            local ok, info = pcall(C_TransmogCollection.GetSourceInfo, sourceID)
-            if ok and info then itemID = info.itemID end
+            local info = C_TransmogCollection.GetSourceInfo(sourceID)
+            if info then itemID = info.itemID end
         end
 
         -- Remember this itemID gave a new appearance this loot window, so its
@@ -1845,9 +1848,9 @@ local function OnDropEvent(_, event, ...)
                     -- Grab the source link if it wasn't ready at detection.
                     if not toast.link and C_TransmogCollection
                        and C_TransmogCollection.GetAppearanceSourceInfo then
-                        local ok, _, _, _, _, _, itemLink =
-                            pcall(C_TransmogCollection.GetAppearanceSourceInfo, sourceID)
-                        if ok and itemLink then toast.link = itemLink end
+                        local _, _, _, _, _, itemLink =
+                            C_TransmogCollection.GetAppearanceSourceInfo(sourceID)
+                        if itemLink then toast.link = itemLink end
                     end
                     if toast.frame and toast.frame:IsShown() then
                         ApplyContent(toast.frame, toast)
@@ -2446,7 +2449,7 @@ function RR:BuildPreviewBatch(parent)
         -- A sample with its own name mirrors a mount/pet row, whose live
         -- toast shows the journal name; the item id only supplies the icon.
         local nm = (s.name and RR.L[s.name])
-            or (GetItemInfo and GetItemInfo(s.id)) or ""
+            or (GetItemInfo and C_Item.GetItemInfo(s.id)) or ""
         ApplyContent(toastFrame, {
             icon = s.icon, name = nm, quality = s.quality, glowColor = s.glowColor,
             isAppearance = s.appearance, isSpecial = (not s.appearance),
@@ -2477,7 +2480,7 @@ function RR:BuildPreviewBatch(parent)
             local waiter = CreateFrame("Frame")
             waiter:RegisterEvent("GET_ITEM_INFO_RECEIVED")
             waiter:SetScript("OnEvent", function()
-                local itemName = GetItemInfo(s.id)
+                local itemName = C_Item.GetItemInfo(s.id)
                 if itemName then
                     toastFrame.itemNameText:SetText(itemName)
                     local ic = C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(s.id)
@@ -2485,7 +2488,7 @@ function RR:BuildPreviewBatch(parent)
                     waiter:UnregisterAllEvents()
                 end
             end)
-            GetItemInfo(s.id)
+            C_Item.GetItemInfo(s.id)
         end
 
         frames[i] = toastFrame
@@ -2653,7 +2656,7 @@ function RR:BuildToasterMockup(parent, mockScale)
     -- ---- Sample toast (right, anchored to the panel) ---------------------
     local toast = ConstructToastFrame(mock)
     toast:SetFrameStrata(parent:GetFrameStrata())
-    local nm = (GetItemInfo and GetItemInfo(18832)) or ""
+    local nm = (GetItemInfo and C_Item.GetItemInfo(18832)) or ""
     ApplyContent(toast, { icon = "Interface\\Icons\\INV_Sword_39", name = nm,
                           quality = 4, glowColor = GLOW_PINK, isAppearance = true })
     -- Banner toasts use the art's fixed 4:1 width.
@@ -2673,10 +2676,10 @@ function RR:BuildToasterMockup(parent, mockScale)
         local waiter = CreateFrame("Frame")
         waiter:RegisterEvent("GET_ITEM_INFO_RECEIVED")
         waiter:SetScript("OnEvent", function()
-            local itemName = GetItemInfo(18832)
+            local itemName = C_Item.GetItemInfo(18832)
             if itemName then toast.itemNameText:SetText(itemName); waiter:UnregisterAllEvents() end
         end)
-        GetItemInfo(18832)
+        C_Item.GetItemInfo(18832)
     end
 
     local handle = { frame = mock, panel = pBox, toast = toast, mockScale = MOCK_SCALE }
@@ -2723,9 +2726,9 @@ function RR:RefreshToasterLifecycle()
     if self.UI and self.UI.RefreshSettingsToasterState then
         self.UI.RefreshSettingsToasterState()
     end
-    -- Keep the footer status arrow in sync.
-    if self.UI and self.UI.RefreshFooterToasterStatus then
-        self.UI.RefreshFooterToasterStatus()
+    -- Keep the footer status slot in sync.
+    if self.UI and self.UI.RefreshFooterStatus then
+        self.UI.RefreshFooterStatus()
     end
 end
 

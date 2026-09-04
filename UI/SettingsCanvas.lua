@@ -132,6 +132,25 @@ local function AddCheckbox(page, label, indent, getValue, setValue)
     return cb
 end
 
+-- Cyan section label over a thin rule, so a page can group its controls
+-- the way the nav rail groups its tabs.
+local function AddSectionLabel(page, text)
+    local label = page:CreateFontString(nil, "ARTWORK")
+    RR.SafeSetFont(label, CANVAS_FONT, 13, "")
+    label:SetPoint("TOPLEFT", 0, pageCursor[page])
+    label:SetText(text)
+    label:SetTextColor(unpack(COLOR_CYAN))
+    label:SetShadowOffset(1, -1)
+    label:SetShadowColor(0, 0, 0, 1)
+    local rule = page:CreateTexture(nil, "ARTWORK")
+    rule:SetColorTexture(COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 0.25)
+    rule:SetHeight(1)
+    rule:SetPoint("TOPLEFT", 0, pageCursor[page] - 17)
+    rule:SetPoint("TOPRIGHT", page, "TOPRIGHT", -8, pageCursor[page] - 17)
+    pageCursor[page] = pageCursor[page] - 28
+    return label
+end
+
 local function AddSlider(page, label, minV, maxV, step, getValue, setValue, formatValue)
     local container = CreateFrame("Frame", nil, page)
     container:SetSize(CONTENT_W, LABELED_H)
@@ -187,6 +206,7 @@ local function AddDropdown(page, label, options, getValue, setValue)
     local dd = CreateFrame("DropdownButton", nil, container, "WowStyle1DropdownTemplate")
     dd:SetPoint("TOPLEFT", 0, -18)
     dd:SetWidth(CONTENT_W - 8)
+    if UI.StyleDropdown then UI.StyleDropdown(dd) end
 
     local function IsSelected(value) return getValue() == value end
     local function SetSelected(value) setValue(value) end
@@ -194,6 +214,14 @@ local function AddDropdown(page, label, options, getValue, setValue)
         for _, opt in ipairs(options) do
             local radio = rootDescription:CreateRadio(
                 opt.text, IsSelected, SetSelected, opt.value)
+            if radio.AddInitializer then
+                radio:AddInitializer(function(button)
+                    local label = button.fontString or button.Text
+                    if label and label.SetFontObject and UI.DropdownFont then
+                        label:SetFontObject(UI.DropdownFont())
+                    end
+                end)
+            end
             if opt.disabled and opt.disabled() then
                 radio:SetEnabled(false)
                 if opt.disabledTooltip then
@@ -228,8 +256,9 @@ end
 
 -- ---- Build the three pages -----------------------------------------------
 
-local pageGeneral, pageAppearance, pageToaster, pageCustomize, pageWhatsNew, pageHelp =
-    NewPage(), NewPage(), NewPage(), NewPage(), NewPage(), NewPage()
+local pageGeneral, pageAppearance, pageToaster, pageCustomize, pageWhatsNew,
+    pageMap, pageHelp =
+    NewPage(), NewPage(), NewPage(), NewPage(), NewPage(), NewPage(), NewPage()
 
 -- General (was "Behavior")
 AddDropdown(pageGeneral, RR.L["On Login Show RetroRuns"], {
@@ -246,6 +275,16 @@ AddDropdown(pageGeneral, RR.L["Boss Progress Display"], {
     },
     function() return RR:GetSetting("bossOrderMode", "rr") end,
     function(value) RR:SetSetting("bossOrderMode", value); if UI.Update then UI.Update() end end)
+
+AddDropdown(pageGeneral, RR.L["Default Transmog Filter"], {
+        { value = "mine", text = RR.L["Show My Class"] },
+        { value = "all",  text = RR.L["Show All Classes"] },
+    },
+    function() return RR:GetSetting("tmogDefaultClassFilter", "mine") end,
+    function(value)
+        RR:SetSetting("tmogDefaultClassFilter", value)
+        if UI.RefreshTmogWindowIfShown then UI.RefreshTmogWindowIfShown() end
+    end)
 
 AddCheckbox(pageGeneral, RR.L["Minimap Button"], 0,
     function() return RR:GetSetting("showMinimap") ~= false end,
@@ -318,6 +357,9 @@ local COLOR_AMBER    = { 1.00, 0.55, 0.20 }   -- "travel to a supported raid"
 local COLOR_GREEN    = { 0.40, 0.90, 0.45 }   -- "active"
 local COLOR_RED      = { 0.95, 0.35, 0.35 }   -- "manually disabled"
 local SEG_FONT_SIZE  = 15
+local STATUS_FONT_SIZE = 13   -- Active Status value only: "Travel to a
+                              -- Supported Instance" overruns the row at
+                              -- SEG_FONT_SIZE.
 local SUB_INDENT     = 18
 local VALUE_X = 240   -- page-relative x for the value column. Sized to clear
                       -- the widest label, RR.L["Hide Blizzard Boss Banner:"] at 15pt
@@ -397,7 +439,7 @@ do
 
     -- Status text stays in the retro font to match the rest of the panel.
     statusValue = pageToaster:CreateFontString(nil, "ARTWORK")
-    RR.SafeSetFont(statusValue, CANVAS_FONT, SEG_FONT_SIZE, "")
+    RR.SafeSetFont(statusValue, CANVAS_FONT, STATUS_FONT_SIZE, "")
     statusValue:SetPoint("LEFT", statusArrow, "RIGHT", 5, 0)
     statusValue:SetShadowOffset(1, -1); statusValue:SetShadowColor(0, 0, 0, 1)
 
@@ -406,7 +448,7 @@ end
 
 
 -- A pair of clickable text buttons (e.g. Enable | Disable). The selected one is
--- cyan + underlined; the other is gray. getValue returns the current bool;
+-- cyan with a magenta underline; the other is gray. getValue returns the current bool;
 -- setValue(bool) writes it. trueLabel/falseLabel are the words shown.
 local function AddButtonPair(label, indent, trueLabel, falseLabel, getValue, setValue)
     local rowY = pageCursor[pageToaster]
@@ -433,8 +475,12 @@ local function AddButtonPair(label, indent, trueLabel, falseLabel, getValue, set
         fs:SetPoint("TOPLEFT", btn, "TOPLEFT")
         -- Underline; shown only when selected.
         local ul = btn:CreateTexture(nil, "ARTWORK")
-        ul:SetColorTexture(COLOR_CYAN[1], COLOR_CYAN[2], COLOR_CYAN[3], 1)
-        ul:SetHeight(1)
+        ul:SetColorTexture(COLOR_PINK[1], COLOR_PINK[2], COLOR_PINK[3], 1)
+        -- One PHYSICAL pixel, not one frame unit. Below a UI scale of 1 a
+        -- 1-unit hairline covers less than a pixel and renders partially,
+        -- which a low-luminance color does not survive. Re-applied on
+        -- Refresh so a scale change does not leave it stale.
+        ul:SetHeight(1 / (ul:GetEffectiveScale() or 1))
         -- Same 1px-texture hardening the dividers use; without it a
         -- hairline at a fractional coordinate can round to nothing.
         if ul.SetTexelSnappingBias then
@@ -496,9 +542,12 @@ local function AddButtonPair(label, indent, trueLabel, falseLabel, getValue, set
         falseBtn.underline:SetShown(not on)
         -- Mute the underline color when locked. SetColorTexture needs an explicit
         -- alpha; the COLOR_* tables carry only RGB, so pass 1 or it renders clear.
-        local ur, ug, ub = unpack(operable and COLOR_CYAN or COLOR_DIM)
+        local ur, ug, ub = unpack(operable and COLOR_PINK or COLOR_DIM)
         trueBtn.underline:SetColorTexture(ur, ug, ub, 1)
         falseBtn.underline:SetColorTexture(ur, ug, ub, 1)
+        local pixelHeight = 1 / (trueBtn.underline:GetEffectiveScale() or 1)
+        trueBtn.underline:SetHeight(pixelHeight)
+        falseBtn.underline:SetHeight(pixelHeight)
     end
 
     return row
@@ -873,7 +922,7 @@ do
     -- Toast duration (seconds, 1.5..8.0). Grayed while "remain until clicked"
     -- is on.
     local durationSlider = AddSlider(pageCustomize, RR.L["Toast Duration"], 1.5, 8.0, 0.5,
-        function() return RR:GetSetting("toasterDuration", 3.0) end,
+        function() return RR:GetSetting("toasterDuration", 5.0) end,
         function(value) RR:SetSetting("toasterDuration", value) end,
         function(value) return ("%.1fs"):format(value) end)
 
@@ -1061,7 +1110,7 @@ do
     local CMD_ROW_H = 12 + 6
     local commands = {
         { "/rr",            RR.L["toggle main panel"] },
-        { "/rr status",     RR.L["current raid, step, kill state"] },
+        { "/rr status",     RR.L["current instance, step, kill state"] },
         { "/rr tmog",       RR.L["open transmog browser"] },
         { "/rr skips",      RR.L["account-wide raid skip status"] },
         { "/rr settings",   RR.L["open settings window"] },
@@ -1147,6 +1196,56 @@ do
         "RETRORUNS_CHAT_URL", URL_CURSE, RR.L["Comments and feedback (CurseForge)"])
     MakeLinkRow(ICON_BUG, COLOR_PINK, RR.L["Github - Report a bug"],
         "RETRORUNS_BUG_URL", URL_GITHUB, RR.L["Report a bug (GitHub)"])
+end
+
+-- Map ---------------------------------------------------------------------
+-- The world-map corner checkbox and these controls read the same settings,
+-- and every path repaints through overlay:Refresh, so they cannot drift.
+
+local function RepaintMapOverlay()
+    if RetroRunsMapOverlay and RetroRunsMapOverlay.Refresh
+        and WorldMapFrame and WorldMapFrame:IsShown() then
+        RetroRunsMapOverlay:Refresh()
+    end
+end
+
+AddSectionLabel(pageMap, RR.L["World Map"])
+
+local mapPoiMaster
+local mapRareChild
+
+local function SyncMapChildren()
+    local masterOn = RR:GetSetting("mapPois", true) ~= false
+    if mapRareChild then
+        mapRareChild:SetEnabled(masterOn)
+        mapRareChild.Text:SetAlpha(masterOn and 1 or 0.4)
+    end
+end
+
+mapPoiMaster = AddCheckbox(pageMap, RR.L["Enable Map POIs"], 0,
+    function() return RR:GetSetting("mapPois", true) ~= false end,
+    function(value)
+        RR:SetSetting("mapPois", value)
+        SyncMapChildren()
+        RepaintMapOverlay()
+    end)
+
+-- Stored as SHOW, asked as HIDE, so both surfaces word it the same way
+-- and nobody's saved value has to migrate.
+mapRareChild = AddCheckbox(pageMap,
+    RR.L["Hide fully collected rares from map"], 16,
+    function() return RR:GetSetting("showCollectedRares", true) == false end,
+    function(value)
+        RR:SetSetting("showCollectedRares", not value)
+        RepaintMapOverlay()
+    end)
+
+do
+    local baseRefresh = mapRareChild.RR_Refresh
+    mapRareChild.RR_Refresh = function(self)
+        baseRefresh(self)
+        SyncMapChildren()
+    end
 end
 
 -- ---- Left nav tab rail ---------------------------------------------------
@@ -1237,7 +1336,8 @@ local toasterTab = MakeTab(3, RR.L["Toaster"], pageToaster, true)
 -- below Customize reads as a normal tab gap rather than a double gap.
 MakeTab(4, RR.L["Customize"],   pageCustomize, false, true, 10)
 MakeTab(5, RR.L["What's New"],  pageWhatsNew,  false, false, 10)
-MakeTab(6, RR.L["Help"],        pageHelp,      false, false, 10)
+MakeTab(6, RR.L["Map"],         pageMap,       false, false, 10)
+MakeTab(7, RR.L["Help"],        pageHelp,      false, false, 10)
 
 -- ---- Footer: reset + feedback icons --------------------------------------
 local RESET_DEFAULTS = {
@@ -1245,8 +1345,9 @@ local RESET_DEFAULTS = {
     bodyFontStyle = "standard", launchMode = "minimized", bossOrderMode = "rr",
     showMinimap = true, toasterEnabled = false, toasterLootSummary = true,
     toasterScale = 1.0, toasterLocked = true, toasterAnchor = nil,
-    toasterDuration = 3.0, toasterStayUntilClick = false,
+    toasterDuration = 5.0, toasterStayUntilClick = false,
     toasterHideBossBanner = true,
+    mapPois = true, showCollectedRares = true,
 }
 
 -- Reconcile the Toaster tab: the read-only Status word reflects live truth,
@@ -1264,7 +1365,7 @@ RefreshToasterControls = function()
     elseif inRaid then
         stateColor, arrowUp, labelText = COLOR_GREEN,  true, RR.L["ACTIVE"]
     else
-        stateColor, arrowUp, labelText = COLOR_AMBER, false, RR.L["Travel to a Supported Raid"]
+        stateColor, arrowUp, labelText = COLOR_AMBER, false, RR.L["Travel to a Supported Instance"]
     end
 
     if statusValue then

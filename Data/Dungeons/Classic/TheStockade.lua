@@ -12,7 +12,14 @@ RetroRuns_DungeonData[238] = {
     name              = "The Stockade",
     expansion         = "Classic",
     difficultyModel   = "dungeonBinary",
+    availableDifficulties = { 14 },
     patch             = "1.0",
+
+    entrance = {
+        mapID = 84,
+        x     = 0.5032,
+        y     = 0.6613,
+    },
 
     bosses = {
         {
@@ -20,7 +27,6 @@ RetroRuns_DungeonData[238] = {
             name               = "Hogger",
             journalEncounterID = 464,
             achievements       = {
-                { id = 633, name = "Stormwind Stockade" },
             },
             loot = {
                 { id = 2168, slot = "Feet", name = "Corpse Rompers", sources = { [14]=641 } },
@@ -56,6 +62,86 @@ RetroRuns_DungeonData[238] = {
                 { id = 132570, slot = "Feet", name = "Stolen Guards Chain Boots", sources = { [14]=76403 } },
                 { id = 151077, slot = "Waist", name = "Cast Iron Waistplate", sources = { [14]=89302 } },
                 { id = 63346, slot = "Weapon", name = "Wicked Dagger", sources = { [14]=31792 } },
+            },
+        },
+    },
+
+    exitNote    = "None available",
+    minExitNote = "None available",
+
+    routing = {
+        -- 1. Hogger (boss 1)
+        {
+            step      = 1,
+            priority  = 1,
+            bossIndex = 1,
+            title     = "Hogger",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 225 },
+                    kind    = "path",
+                    note    = "After zoning in, take the main pathway to the left to reach ^Hogger^.",
+                    minNote = "Left path to Hogger",
+                    points  = {
+                        { 0.500, 0.594 },
+                        { 0.500, 0.360 },
+                        { 0.417, 0.363 },
+                        { 0.341, 0.348 },
+                        { 0.244, 0.286 },
+                    },
+                },
+            },
+        },
+
+        -- 2. Lord Overheat (boss 2)
+        {
+            step      = 2,
+            priority  = 1,
+            bossIndex = 2,
+            title     = "Lord Overheat",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 225 },
+                    kind    = "path",
+                    note    = "After defeating ^Hogger^, take the path all the way to the right and you'll eventually reach ^Lord Overheat^.",
+                    minNote = "Far path right to Lord Overheat",
+                    points  = {
+                        { 0.248, 0.295 },
+                        { 0.315, 0.335 },
+                        { 0.404, 0.363 },
+                        { 0.503, 0.365 },
+                        { 0.618, 0.368 },
+                        { 0.676, 0.387 },
+                        { 0.735, 0.420 },
+                        { 0.760, 0.443 },
+                    },
+                },
+            },
+        },
+
+        -- 3. Randolph Moloch (boss 3)
+        {
+            step      = 3,
+            priority  = 1,
+            bossIndex = 3,
+            title     = "Randolph Moloch",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 225 },
+                    kind    = "path",
+                    note    = "After killing ^Lord Overheat^, backtrack to the main path and go north to engage ^Randolph Moloch^.",
+                    minNote = "North path to Randolph",
+                    points  = {
+                        { 0.740, 0.421 },
+                        { 0.655, 0.373 },
+                        { 0.570, 0.360 },
+                        { 0.500, 0.360 },
+                        { 0.498, 0.258 },
+                    },
+                },
             },
         },
     },

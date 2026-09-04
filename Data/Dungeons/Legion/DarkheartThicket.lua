@@ -12,7 +12,15 @@ RetroRuns_DungeonData[762] = {
     name              = "Darkheart Thicket",
     expansion         = "Legion",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "7.0.3",
+    timewalking       = true,
+
+    entrance = {
+        mapID = 641,
+        x     = 0.5891,
+        y     = 0.3099,
+    },
 
     gloryMeta = {
         id   = 11163,
@@ -63,7 +71,7 @@ RetroRuns_DungeonData[762] = {
             name               = "Dresaron",
             journalEncounterID = 1656,
             achievements       = {
-                { id = 10766, name = "Egg-cellent!", meta = true },
+                { id = 10766, name = "Egg-cellent!", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 139089, slot = "Chest", name = "Night Dreamer Robe", sources = { [14]=80431, [15]=80431, [16]=80431 } },
@@ -81,12 +89,6 @@ RetroRuns_DungeonData[762] = {
             name               = "Shade of Xavius",
             journalEncounterID = 1657,
             achievements       = {
-                { id = 10783, name = "Darkheart Thicket" },
-                { id = 10784, name = "Heroic: Darkheart Thicket" },
-                { id = 10785, name = "Mythic: Darkheart Thicket" },
-                { id = 60837, name = "Darkheart Thicket" },
-                { id = 60838, name = "Heroic: Darkheart Thicket" },
-                { id = 60839, name = "Mythic: Darkheart Thicket" },
             },
             loot = {
                 { id = 134405, slot = "Back", name = "Cloak of Fading Echoes", sources = { [14]=78917, [15]=80809, [16]=78917 } },

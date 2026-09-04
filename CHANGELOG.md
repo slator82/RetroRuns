@@ -2,6 +2,136 @@
 
 All notable changes to RetroRuns are documented here.
 
+## [3.0.0] - 2026-09-04
+
+### Added
+
+- **Dungeons!** Initially shipping with 20 dungeons which includes 
+  every Classic dungeon plus a couple from MoP. More dungeons will continue
+  to be added! While the routes/guides are being developed for more dungeons,
+  feel free to utilize the transmog browser for ALL dungeons, as well as
+  pink plane navigation to every entrance.
+  
+- **Search, everywhere.** The transmog browser, the main panel and the
+  achievements window all have a new magnifying glass. Search by expansion,
+  instance, boss, loot, POI, etc. Whatever you find, one click takes you
+  right to it.
+  
+- **Progress persists in dungeons with no lockout.** Normal dungeons keep
+  no lockout, so the game gives an addon nothing to know whether the previous
+  run is still there or if it reset. RetroRuns works it out anyway: log in, 
+  reload or walk back in and an active run comes back with every kill in place, 
+  while a reset instance starts you at step one on the spot.
+
+- **Map markers show more.** Rare spawns and certain treasures now show their
+  locations on the map along with a mouseover hint to give a quick status on
+  tracked appearances.
+
+- **Raid maps mark the NPCs worth knowing about.** Blackrock Foundry's
+  skip-quest NPC and vendor, Icecrown Citadel's tier vendors, Blackwing
+  Lair's alchemy workbenches and the like, each with a hover saying what it
+  is for.
+
+- **RetroRuns has a button on the world map.** It sits in the icon column at
+  the top-right corner alongside other addons' map buttons. Its menu
+  has several map options to toggle, such as hiding POIs you've fully collected
+  or disabling RetroRuns POIs altogether.
+
+- **Rare, trash and object drops are in the transmog browser.** Rares get a
+  gold "Rare:" tag, trash drops get their own section, and Dungeon Set
+  pieces show up on the bosses that drop them. Items that have been removed
+  from the game or have become unobtainable are excluded.
+
+- **Timewalking drops get their own "TW" pill.** Looks that only drop during
+  Timewalking used to be hidden. Now they show with a TW pill.
+
+- **The list knows when Timewalking is running.** An hourglass marks the live
+  Timewalking expansion and every instance that offers a run. The hourglass
+  color indicates how much time remains on the event.
+
+- **Dungeons in the current Mythic+ season are marked.** A "M+" tag beside the
+  name, and it follows the rotation on its own with no update needed. This
+  serves as a heads up to avoid Mythic runs that are on seasonal rotation.
+
+- **The idle footer counts your instances.** "Instance Limit: 3/10 (42m)"
+  shows how many you've entered against the hourly cap and when the oldest
+  slot frees. Only shows when outside of an instance.
+
+- **The achievements window covers dungeons.** A Raids / Dungeons switch sits
+  above the instance list, an instance with nothing to track says so, and a
+  Report button in the footer allows users to flag a solo grade that has gone 
+  stale.
+
+- **The transmog browser can open on All classes.** A "Default Transmog
+  Filter" setting under General picks whether the browser opens on your
+  class or on every class. The dropdown inside the browser still narrows it
+  per visit.
+
+- **Faction-only bosses are marked.** Uldaman's Lost Dwarves are Horde only,
+  so on Alliance the row shows a lock and the boss count skips them.
+
+### Changed
+
+- **Tier upgrade chains read one way everywhere.** Firelands uses the same
+  two-dot chain as every other raid, and the Icecrown Citadel legend explains
+  the dots. Dragon Soul no longer lists every Raid Finder token under every
+  boss.
+
+- **The nav plane sits beside the raid's name**, instead of beside the 
+  difficulty pills.
+
+- **Loot lists are tidier.** Normal and Heroic drops collapse to one row,
+  trash groups by source, shared notes appear once, and token lines lead the
+  list.
+
+- **The panel header is tidier.** Centered wordmark, a magenta underline
+  that survives small UI scales, and "Run complete!" on the minimized bar.
+  Text that previously said "raid" now says "instance".
+
+- **The menu dropdowns are rebuilt.** The Transmog, Achievements and Settings
+  dropdowns use the game's current menu system, with a slimmer bar, a
+  magenta arrow and no hover popups.
+
+- **Every window closes the same way.** The Achievements, Transmog and
+  Skips windows use the same styled close box as the main panel.
+
+- **A boss with nothing to collect says so**, in one line.
+
+### Fixed
+
+- **Looks that can no longer be collected are gone from the browser.** Dungeon
+  Set 1 pieces with no boss drops, the Tier 0.5 summons, and season-only rows in modern
+  dungeons. Anything still collectable elsewhere is still listed there.
+
+- **Looks that were missing are back.** Several pieces the Encounter Journal
+  never listed are back, including End Time's Bindings of the End Times and 
+  Roogug's Swinesteel Girdle.
+
+- **The panel stays where you put it.** No more creeping up the screen after
+  quitting minimized, and no more collapsing on reload.
+
+- **Boss kills register in every dungeon.** When the game doesn't report a
+  kill, the addon reads the instance's own objectives and picks it up within
+  seconds.
+
+- **Siege of Orgrimmar and newer raids have their lockout tooltip back.**
+
+- **Browsing another instance no longer highlights "current difficulty".**
+  The white "needed-now" color only appears for the instance you are standing
+  in.
+
+- **Bosses you cannot reach no longer hold the count open.** Sinestra outside
+  Heroic and Ra-den in Throne of Thunder now carry a lock.
+
+- **The transmog totals count each appearance once**, even when it drops
+  from more than one place.
+
+- **Smaller fixes.** The Skips window updates on quest turn-in, a finished
+  skip run in a dungeon reads right, the map button closes the map on a second 
+  click, loot toasts say "Browse locked in combat" instead of erroring, The
+  MOTHERLODE!! travel plane knows both faction entrances, and zoning into a
+  dungeon paints the panel right away.
+
 ## [2.5.0] - 2026-08-18
 
 ### Added

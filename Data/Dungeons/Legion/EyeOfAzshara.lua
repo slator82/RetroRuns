@@ -12,7 +12,15 @@ RetroRuns_DungeonData[716] = {
     name              = "Eye of Azshara",
     expansion         = "Legion",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "7.0.3",
+    timewalking       = true,
+
+    entrance = {
+        mapID = 630,
+        x     = 0.6100,
+        y     = 0.4111,
+    },
 
     gloryMeta = {
         id   = 11163,
@@ -28,7 +36,7 @@ RetroRuns_DungeonData[716] = {
             name               = "Warlord Parjesh",
             journalEncounterID = 1480,
             achievements       = {
-                { id = 10456, name = "But You Say He's Just a Friend", meta = true },
+                { id = 10456, name = "But You Say He's Just a Friend", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 134223, slot = "Chest", name = "Coralplate Chestguard", sources = { [14]=77517, [15]=77517, [16]=77517 } },
@@ -46,7 +54,7 @@ RetroRuns_DungeonData[716] = {
             name               = "Lady Hatecoil",
             journalEncounterID = 1490,
             achievements       = {
-                { id = 10457, name = "Stay Salty", meta = true },
+                { id = 10457, name = "Stay Salty", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 134263, slot = "Chest", name = "Seawitch Robes", sources = { [14]=77547, [15]=77547, [16]=77547 } },
@@ -95,13 +103,7 @@ RetroRuns_DungeonData[716] = {
             name               = "Wrath of Azshara",
             journalEncounterID = 1492,
             achievements       = {
-                { id = 10458, name = "Ready for Raiding V", meta = true },
-                { id = 10780, name = "Eye of Azshara" },
-                { id = 10781, name = "Heroic: Eye of Azshara" },
-                { id = 10782, name = "Mythic: Eye of Azshara" },
-                { id = 60819, name = "Eye of Azshara" },
-                { id = 60820, name = "Heroic: Eye of Azshara" },
-                { id = 60821, name = "Mythic: Eye of Azshara" },
+                { id = 10458, name = "Ready for Raiding V", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 134237, slot = "Feet", name = "Brinewashed Leather Boots", sources = { [14]=77528, [15]=77528, [16]=77528 } },

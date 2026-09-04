@@ -12,7 +12,14 @@ RetroRuns_DungeonData[900] = {
     name              = "Cathedral of Eternal Night",
     expansion         = "Legion",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 15, 16 },
     patch             = "7.2.0",
+
+    entrance = {
+        mapID = 646,
+        x     = 0.6487,
+        y     = 0.1683,
+    },
 
     bosses = {
         {
@@ -20,10 +27,10 @@ RetroRuns_DungeonData[900] = {
             name               = "Agronox",
             journalEncounterID = 1905,
             achievements       = {
-                { id = 11768, name = "Boom Bloom" },
+                { id = 11768, name = "Boom Bloom", soloable = "yes" },
             },
             loot = {
-                { id = 144468, slot = "Back", name = "Felpruner's Shroud", sources = { [14]=84580, [15]=84580, [16]=84580 } },
+                { id = 144468, slot = "Back", name = "Felpruner's Shroud", sources = { [15]=84580, [16]=84580 } },
                 { id = 144483, slot = "Chest", name = "Spore-Coated Vest", sources = { [14]=84598, [15]=84599, [16]=84598 } },
                 { id = 144490, slot = "Feet", name = "Corruption-Fused Stompers", sources = { [14]=84612, [15]=84613, [16]=84612 } },
                 { id = 144470, slot = "Hands", name = "Grovetender's Handwraps", sources = { [14]=84584, [15]=84585, [16]=84584 } },
@@ -37,8 +44,10 @@ RetroRuns_DungeonData[900] = {
             index              = 2,
             name               = "Thrashbite the Scornful",
             journalEncounterID = 1906,
+            -- Criterion prose reads "Thrashbite defeated" and does not carry the journal name.
+            scenarioCriteriaID = 36202,
             achievements       = {
-                { id = 11769, name = "A Steamy Romance Saga" },
+                { id = 11769, name = "A Steamy Romance Saga", soloable = "no" },
             },
             loot = {
                 { id = 144499, slot = "Chest", name = "Tenderized Breastplate", sources = { [14]=84628, [15]=84629, [16]=84628 } },
@@ -57,7 +66,7 @@ RetroRuns_DungeonData[900] = {
             achievements       = {
             },
             loot = {
-                { id = 144476, slot = "Back", name = "Cloak of the Unending Assault", sources = { [14]=84596, [15]=84596, [16]=84596 } },
+                { id = 144476, slot = "Back", name = "Cloak of the Unending Assault", sources = { [15]=84596, [16]=84596 } },
                 { id = 144495, slot = "Chest", name = "Domatrax's Chain Hauberk", sources = { [14]=84620, [15]=84621, [16]=84620 } },
                 { id = 144500, slot = "Feet", name = "Two-Toed Thrashstompers", sources = { [14]=84630, [15]=84631, [16]=84630 } },
                 { id = 144488, slot = "Hands", name = "Feaster Hide Gloves", sources = { [14]=84608, [15]=84609, [16]=84608 } },
@@ -73,13 +82,7 @@ RetroRuns_DungeonData[900] = {
             name               = "Mephistroth",
             journalEncounterID = 1878,
             achievements       = {
-                { id = 11700, name = "Cathedral of Eternal Night" },
-                { id = 11701, name = "Heroic: Cathedral of Eternal Night" },
-                { id = 11702, name = "Mythic: Cathedral of Eternal Night" },
-                { id = 11703, name = "Master of Shadows" },
-                { id = 60849, name = "Cathedral of Eternal Night" },
-                { id = 60850, name = "Heroic: Cathedral of Eternal Night" },
-                { id = 60851, name = "Mythic: Cathedral of Eternal Night" },
+                { id = 11703, name = "Master of Shadows", soloable = "yes" },
             },
             loot = {
                 { id = 144473, slot = "Chest", name = "Nathrezim Acolyte's Robes", sources = { [14]=84590, [15]=84591, [16]=84590 } },

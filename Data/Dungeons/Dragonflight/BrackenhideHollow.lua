@@ -12,7 +12,15 @@ RetroRuns_DungeonData[1196] = {
     name              = "Brackenhide Hollow",
     expansion         = "Dragonflight",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "10.0.2",
+    timewalking       = true,
+
+    entrance = {
+        mapID = 2024,
+        x     = 0.1147,
+        y     = 0.4893,
+    },
 
     gloryMeta = {
         id   = 16295,
@@ -28,7 +36,7 @@ RetroRuns_DungeonData[1196] = {
             name               = "Hackclaw's War-Band",
             journalEncounterID = 2471,
             achievements       = {
-                { id = 16296, name = "Growlbossify", meta = true },
+                { id = 16296, name = "Growlbossify", meta = true, soloable = "kinda" },
             },
             loot = {
                 { id = 193673, slot = "Feet", name = "Ravenous Pursuer's Footwraps", sources = { [14]=180799, [15]=180799, [16]=180799 } },
@@ -41,7 +49,7 @@ RetroRuns_DungeonData[1196] = {
             name               = "Treemouth",
             journalEncounterID = 2473,
             achievements       = {
-                { id = 16430, name = "All Bark, All Bite", meta = true },
+                { id = 16430, name = "All Bark, All Bite", meta = true, soloable = "kinda" },
             },
             loot = {
                 { id = 193654, slot = "Feet", name = "Ancient Rotwalkers", sources = { [14]=180785, [15]=180785, [16]=180785 } },
@@ -70,12 +78,9 @@ RetroRuns_DungeonData[1196] = {
             name               = "Decatriarch Wratheye",
             journalEncounterID = 2474,
             achievements       = {
-                { id = 16255, name = "Brackenhide Hollow" },
-                { id = 16256, name = "Heroic: Brackenhide Hollow" },
-                { id = 16257, name = "Mythic: Brackenhide Hollow" },
-                { id = 16404, name = "So You Can Kill This in a Way That Matters...", meta = true },
-                { id = 16110, name = "Subscribed to Hyena Facts" },
-                { id = 16762, name = "The Vegetarian Diet" },
+                { id = 16404, name = "So You Can Kill This in a Way That Matters...", meta = true, soloable = "kinda" },
+                { id = 16110, name = "Subscribed to Hyena Facts", soloable = "yes" },
+                { id = 16762, name = "The Vegetarian Diet", soloable = "yes" },
             },
             loot = {
                 { id = 193661, slot = "Hands", name = "Blightweaver's Clutches", sources = { [14]=180792, [15]=180792, [16]=180792 } },

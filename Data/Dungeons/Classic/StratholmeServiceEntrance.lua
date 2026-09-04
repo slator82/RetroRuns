@@ -12,7 +12,44 @@ RetroRuns_DungeonData[1292] = {
     name              = "Stratholme - Service Entrance",
     expansion         = "Classic",
     difficultyModel   = "dungeonBinary",
+    availableDifficulties = { 14 },
     patch             = "1.0",
+    timewalking       = true,
+    -- Both doors report the same instanceID, so the wing is
+    -- picked from the uiMap the player enters on.
+    uiMaps = { 318 },
+
+    entrance = {
+        mapID = 23,
+        x     = 0.4380,
+        y     = 0.1750,
+    },
+
+    pois = {
+        -- His range is DRAWN, not derived: the sighting list spans two thirds
+        -- of the wing, and its bounding box swallowed the map. This is the
+        -- ground he actually walks, captured in game.
+        { mapID = 318, poiKind = "rare", rareNpc = "Stonespine", mapLabelPos = "above", navPoint = { 0.613, 0.360 }, points = { { 0.440, 0.210 }, { 0.544, 0.494 }, { 0.560, 0.178 }, { 0.576, 0.372 }, { 0.610, 0.246 }, { 0.614, 0.476 }, { 0.614, 0.586 }, { 0.634, 0.712 }, { 0.668, 0.284 }, { 0.668, 0.796 }, { 0.674, 0.212 }, { 0.682, 0.336 }, { 0.692, 0.158 }, { 0.700, 0.482 }, { 0.706, 0.388 }, { 0.762, 0.476 } } },
+    },
+
+    trashLoot = {
+        { id = 18743, slot = "Back", name = "Gracious Cape", sources = { [14]=7470 }, bind = "BoE" },
+        { id = 17061, slot = "Back", name = "Juno's Shadow", sources = { [14]=7074 }, bind = "BoE" },
+        { id = 13397, slot = "Back", name = "Stoneskin Gargoyle Cape", sources = { [14]=4875 }, bind = "BoP", rareNpc = "Stonespine" },
+        { id = 13954, slot = "Feet", name = "Verdant Footpads", sources = { [14]=5075 }, bind = "BoP", rareNpc = "Stonespine" },
+        { id = 18744, slot = "Hands", name = "Plaguebat Fur Gloves", sources = { [14]=7471 }, bind = "BoE" },
+        { id = 18736, slot = "Legs", name = "Plaguehound Leggings", sources = { [14]=7463 }, bind = "BoE" },
+        { id = 18745, slot = "Legs", name = "Sacred Cloth Leggings", sources = { [14]=7472 }, bind = "BoE" },
+        { id = 18742, slot = "Shoulder", name = "Stratholme Militia Shoulderguard", sources = { [14]=7469 }, bind = "BoE" },
+        { id = 16736, slot = "Waist", name = "Belt of Valor", sources = { [14]=6867 }, bind = "BoE" },
+        { id = 16723, slot = "Waist", name = "Lightforge Belt", sources = { [14]=6854 }, bind = "BoE" },
+        { id = 13399, slot = "Weapon", name = "Gargoyle Shredder Talons", sources = { [14]=4877 }, bind = "BoP", rareNpc = "Stonespine" },
+        { id = 16681, slot = "Wrist", name = "Beaststalker's Bindings", sources = { [14]=6812 }, bind = "BoE" },
+        { id = 16671, slot = "Wrist", name = "Bindings of Elements", sources = { [14]=6802 }, bind = "BoE" },
+        { id = 16697, slot = "Wrist", name = "Devout Bracers", sources = { [14]=6828 }, bind = "BoE" },
+        { id = 18741, slot = "Wrist", name = "Morlune's Bracer", sources = { [14]=7468 }, bind = "BoE" },
+        { id = 16714, slot = "Wrist", name = "Wildheart Bracers", sources = { [14]=6845 }, bind = "BoE" },
+    },
 
     bosses = {
         {
@@ -96,8 +133,6 @@ RetroRuns_DungeonData[1292] = {
             name               = "Lord Aurius Rivendare",
             journalEncounterID = 456,
             achievements       = {
-                { id = 646, name = "Stratholme" },
-                { id = 39936, name = "Stratholme (char specific hidden copy)" },
             },
             loot = {
                 { id = 13340, slot = "Back", name = "Cape of the Black Baron", sources = { [14]=4840 } },
@@ -117,5 +152,196 @@ RetroRuns_DungeonData[1292] = {
                 { id = 13335, kind = "mount", name = "Deathcharger's Reins" },
             },
         },
+    },
+
+    routing = {
+
+        -- 1. Baroness Anastari (boss 1)
+        {
+            step      = 1,
+            priority  = 1,
+            bossIndex = 1,
+            title     = "Baroness Anastari",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 318 },
+                    kind    = "path",
+                    note    = "After zoning in, go north and then east to reach ^Baroness Anastari^.",
+                    minNote = "North then east to Baroness",
+                    points  = {
+                        { 0.685, 0.834 },
+                        { 0.652, 0.752 },
+                        { 0.634, 0.664 },
+                        { 0.617, 0.595 },
+                        { 0.661, 0.541 },
+                        { 0.691, 0.503 },
+                        { 0.723, 0.483 },
+                    },
+                },
+            },
+        },
+
+        -- 2. Nerub'enkan (boss 2)
+        {
+            step      = 2,
+            priority  = 1,
+            bossIndex = 2,
+            title     = "Nerub'enkan",
+            requires  = { },
+            segments  = {
+                {
+                    when        = { mapID = 318 },
+                    kind        = "poi",
+                    note        = "After defeating ^Baroness Anastari^, go inside the ^Ash'ari Crystal^ behind her and clear out the enemies.",
+                    minNote     = "Clear out building behind Anastari",
+                    mapLabel    = "Clear building",
+                    mapLabelPos = "below",
+                    completionCheck = true,
+                    -- Fires on the FIRST of the three crystals, not all
+                    -- three: the other two are cleared later in the run.
+                    triggeredBy = { scenario = 24918, quantity = 1 },
+                    points      = {
+                        { 0.781, 0.479 },
+                    },
+                },
+                {
+                    when    = { mapID = 318 },
+                    kind    = "path",
+                    note    = "After clearing out the crystal, go west to find ^Nerub'enkan^ standing in front of the second ^Ash'ari Crystal^.",
+                    minNote = "West to Nerub'enkan",
+                    points  = {
+                        { 0.719, 0.481 },
+                        { 0.661, 0.508 },
+                        { 0.615, 0.454 },
+                        { 0.596, 0.449 },
+                    },
+                },
+            },
+        },
+
+        -- 3. Maleki the Pallid (boss 3)
+        {
+            step      = 3,
+            priority  = 1,
+            bossIndex = 3,
+            title     = "Maleki the Pallid",
+            requires  = { },
+            segments  = {
+                {
+                    when        = { mapID = 318 },
+                    kind        = "poi",
+                    note        = "After defeating ^Nerub'enkan^, go inside the ^Ash'ari Crystal^ behind him and clear out the enemies.",
+                    minNote     = "Clear out building behind Nerub'enkan",
+                    mapLabel    = "Clear building",
+                    mapLabelPos = "below",
+                    completionCheck = true,
+                    -- Second of the three crystals.
+                    triggeredBy = { scenario = 24918, quantity = 2 },
+                    points      = {
+                        { 0.533, 0.492 },
+                    },
+                },
+                {
+                    when    = { mapID = 318 },
+                    kind    = "path",
+                    note    = "After clearing out the second crystal, go northeast to find ^Maleki the Pallid^ standing on the steps in front of the third ^Ash'ari Crystal^.",
+                    minNote = "Northeast to Maleki",
+                    points  = {
+                        { 0.578, 0.424 },
+                        { 0.588, 0.331 },
+                        { 0.607, 0.293 },
+                        { 0.650, 0.254 },
+                    },
+                },
+            },
+        },
+
+        -- 4. Magistrate Barthilas (boss 4)
+        {
+            step      = 4,
+            priority  = 1,
+            bossIndex = 4,
+            title     = "Magistrate Barthilas",
+            requires  = { },
+            segments  = {
+                {
+                    when        = { mapID = 318 },
+                    kind        = "poi",
+                    note        = "After defeating ^Maleki the Pallid^, go inside the final ^Ash'ari Crystal^ behind him and clear out the enemies.",
+                    minNote     = "Clear out the final crystal",
+                    mapLabel    = "Clear building",
+                    mapLabelPos = "above",
+                    completionCheck = true,
+                    -- Dialog, not the scenario criterion: completing the
+                    -- LAST crystal advances the scenario step, so criterion
+                    -- 24918 leaves the current step at the same moment it
+                    -- would read 3/3 and can never be observed there.
+                    -- Quantities 1 and 2 are fine -- the step is still live.
+                    -- The Thuzadin Acolyte's per-crystal lines say "has been
+                    -- destroyed"; this one says "have", and the npc pin makes
+                    -- it exact either way.
+                    triggeredBy = { dialog = { npc = "Lord Aurius Rivendare", match = "Crystals have been destroyed" } },
+                    points      = {
+                        { 0.700, 0.171 },
+                    },
+                },
+                {
+                    when    = { mapID = 318 },
+                    kind    = "path",
+                    note    = "After clearing out the final crystal, go northwest to find ^Magistrate Barthilas^.",
+                    minNote = "Northwest to Barthilas",
+                    points  = {
+                        { 0.644, 0.257 },
+                        { 0.622, 0.261 },
+                        { 0.583, 0.243 },
+                        { 0.567, 0.203 },
+                    },
+                },
+            },
+        },
+
+        -- 5. Ramstein the Gorger (boss 5)
+        {
+            step      = 5,
+            priority  = 1,
+            bossIndex = 5,
+            title     = "Ramstein the Gorger",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 318 },
+                    kind    = "path",
+                    note    = "After killing ^Magistrate Barthilas^, go west into ^Slaughter Square^ and kill all of the abominations to spawn ^Ramstein the Gorger^.",
+                    minNote = "Kill aboms to spawn Ramstein",
+                    points  = {
+                        { 0.542, 0.189 },
+                        { 0.480, 0.197 },
+                    },
+                },
+            },
+        },
+
+        -- 6. Lord Aurius Rivendare (boss 6)
+        {
+            step      = 6,
+            priority  = 1,
+            bossIndex = 6,
+            title     = "Lord Aurius Rivendare",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 318 },
+                    kind    = "path",
+                    note    = "After defeating ^Ramstein the Gorger^, kill the trash that appears then walk into the building to find ^Lord Aurius Rivendare^.",
+                    minNote = "Trash then Rivendare",
+                    points  = {
+                        { 0.434, 0.202 },
+                        { 0.410, 0.201 },
+                    },
+                },
+            },
+        },
+
     },
 }

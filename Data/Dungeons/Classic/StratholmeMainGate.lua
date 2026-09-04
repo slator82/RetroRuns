@@ -12,7 +12,40 @@ RetroRuns_DungeonData[236] = {
     name              = "Stratholme - Main Gate",
     expansion         = "Classic",
     difficultyModel   = "dungeonBinary",
+    availableDifficulties = { 14 },
     patch             = "1.0",
+    timewalking       = true,
+    -- Both doors report instanceID 329, so the wing is picked from the
+    -- uiMap the player enters on. Crusader's Square is the front gate.
+    uiMaps = { 317 },
+
+    entrance = {
+        mapID = 23,
+        x     = 0.2733,
+        y     = 0.1160,
+    },
+
+    pois = {
+        { mapID = 317, poiKind = "rare", rareNpc = "Skul", mapLabelPos = "above", points = { { 0.558, 0.702 }, { 0.576, 0.642 }, { 0.720, 0.566 }, { 0.786, 0.222 }, { 0.786, 0.460 }, { 0.812, 0.342 } } },
+    },
+
+    trashLoot = {
+        { id = 18743, slot = "Back", name = "Gracious Cape", sources = { [14]=7470 }, bind = "BoE" },
+        { id = 17061, slot = "Back", name = "Juno's Shadow", sources = { [14]=7074 }, bind = "BoE" },
+        { id = 13394, slot = "Chest", name = "Skul's Cold Embrace", sources = { [14]=4872 }, bind = "BoP", rareNpc = "Skul" },
+        { id = 18744, slot = "Hands", name = "Plaguebat Fur Gloves", sources = { [14]=7471 }, bind = "BoE" },
+        { id = 13395, slot = "Hands", name = "Skul's Fingerbone Claws", sources = { [14]=4873 }, bind = "BoP", rareNpc = "Skul" },
+        { id = 18736, slot = "Legs", name = "Plaguehound Leggings", sources = { [14]=7463 }, bind = "BoE" },
+        { id = 18745, slot = "Legs", name = "Sacred Cloth Leggings", sources = { [14]=7472 }, bind = "BoE" },
+        { id = 13396, slot = "Ranged", name = "Skul's Ghastly Touch", sources = { [14]=4874 }, bind = "BoP", rareNpc = "Skul" },
+        { id = 18742, slot = "Shoulder", name = "Stratholme Militia Shoulderguard", sources = { [14]=7469 }, bind = "BoE" },
+        { id = 16723, slot = "Waist", name = "Lightforge Belt", sources = { [14]=6854 }, bind = "BoE" },
+        { id = 16681, slot = "Wrist", name = "Beaststalker's Bindings", sources = { [14]=6812 }, bind = "BoE" },
+        { id = 16671, slot = "Wrist", name = "Bindings of Elements", sources = { [14]=6802 }, bind = "BoE" },
+        { id = 16697, slot = "Wrist", name = "Devout Bracers", sources = { [14]=6828 }, bind = "BoE" },
+        { id = 18741, slot = "Wrist", name = "Morlune's Bracer", sources = { [14]=7468 }, bind = "BoE" },
+        { id = 16714, slot = "Wrist", name = "Wildheart Bracers", sources = { [14]=6845 }, bind = "BoE" },
+    },
 
     bosses = {
         {
@@ -115,8 +148,6 @@ RetroRuns_DungeonData[236] = {
             name               = "Balnazzar",
             journalEncounterID = 449,
             achievements       = {
-                { id = 646, name = "Stratholme" },
-                { id = 39936, name = "Stratholme (char specific hidden copy)" },
             },
             loot = {
                 { id = 13369, slot = "Feet", name = "Fire Striders", sources = { [14]=4852 } },
@@ -130,5 +161,248 @@ RetroRuns_DungeonData[236] = {
                 { id = 13360, slot = "Weapon", name = "Gift of the Elven Magi", sources = { [14]=4849 } },
             },
         },
+    },
+
+    exitNote    = "None available",
+    minExitNote = "None available",
+
+    routing = {
+
+        -- 1. The Unforgiven (boss 2)
+        {
+            step      = 1,
+            priority  = 1,
+            bossIndex = 2,
+            title     = "The Unforgiven",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 317 },
+                    kind    = "path",
+                    note    = "After zoning in, move ahead then go right into the loop. Circle through a couple gates and loop around until you reach ^The Unforgiven^.",
+                    minNote = "Right to The Unforgiven",
+                    points  = {
+                        { 0.663, 0.692 },
+                        { 0.679, 0.575 },
+                        { 0.740, 0.543 },
+                        { 0.814, 0.446 },
+                        { 0.837, 0.366 },
+                        { 0.820, 0.295 },
+                        { 0.815, 0.229 },
+                        { 0.804, 0.184 },
+                        { 0.764, 0.193 },
+                    },
+                },
+            },
+        },
+
+        -- 2. Hearthsinger Forresten (boss 1)
+        {
+            step      = 2,
+            priority  = 1,
+            bossIndex = 1,
+            title     = "Hearthsinger Forresten",
+            requires  = { },
+            segments  = {
+                {
+                    when        = { mapID = 317 },
+                    kind        = "poi",
+                    note        = "After killing ^The Unforgiven^, continue counter-clockwise. Click the nearby ^Market Row Postbox^ on your way to ^Hearthsinger Forresten^.",
+                    minNote     = "Click Postbox then Hearthsinger",
+                    mapLabel    = "Click Postbox",
+                    mapLabelPos = "below",
+                    completionCheck = true,
+                    triggeredBy = { dialog = { npc = "Undead Postman", match = "No tampering with the mail" } },
+                    points      = {
+                        { 0.705, 0.249 },
+                    },
+                },
+                {
+                    -- Noteless: takes its travel text from the POI segment
+                    -- above, the Razorfen Downs gong shape.
+                    when    = { mapID = 317 },
+                    kind    = "path",
+                    points  = {
+                        { 0.665, 0.266 },
+                        { 0.619, 0.292 },
+                    },
+                },
+            },
+        },
+
+        -- 3. Postmaster Malown (boss 3)
+        {
+            step      = 3,
+            priority  = 1,
+            bossIndex = 3,
+            title     = "Postmaster Malown",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 317 },
+                    kind    = "path",
+                    note    = "After defeating ^Hearthsinger Forresten^, go south and click ^King's Square Postbox^ followed by ^Ezra Grimm's Postbox^, both marked on the map. ^Postmaster Malown^ should spawn right near you if you've clicked three post boxes.",
+                    minNote = "Click marked post boxes to spawn boss",
+                    points  = {
+                        { 0.605, 0.269 },
+                        { 0.601, 0.393 },
+                        { 0.601, 0.497 },
+                    },
+                },
+                {
+                    -- Noteless: both boxes are covered by the path segment's
+                    -- note above, the Razorfen Downs gong shape.
+                    when        = { mapID = 317 },
+                    kind        = "poi",
+                    mapLabel    = "Click Postbox (1)",
+                    mapLabelPos = "below",
+                    points      = {
+                        { 0.631, 0.516 },
+                    },
+                },
+                {
+                    when        = { mapID = 317 },
+                    kind        = "poi",
+                    mapLabel    = "Click Postbox (2)",
+                    mapLabelPos = "below",
+                    points      = {
+                        { 0.541, 0.717 },
+                    },
+                },
+            },
+        },
+
+        -- 4. Timmy the Cruel (boss 4)
+        {
+            step      = 4,
+            priority  = 1,
+            bossIndex = 4,
+            title     = "Timmy the Cruel",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 317 },
+                    kind    = "path",
+                    note    = "After defeating ^Postmaster Malown^, go northwest until you reach ^Timmy the Cruel^.",
+                    minNote = "Northwest to Timmy",
+                    points  = {
+                        { 0.580, 0.620 },
+                        { 0.602, 0.496 },
+                        { 0.601, 0.368 },
+                        { 0.581, 0.299 },
+                        { 0.504, 0.250 },
+                        { 0.497, 0.218 },
+                    },
+                },
+            },
+        },
+
+        -- 5. Commander Malor (boss 5)
+        {
+            step      = 5,
+            priority  = 1,
+            bossIndex = 5,
+            title     = "Commander Malor",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 317 },
+                    kind    = "path",
+                    note    = "After killing ^Timmy the Cruel^, go west and enter the building. Loop around the hallway until you reach ^Commander Malor^.",
+                    minNote = "West into building for Malor",
+                    points  = {
+                        { 0.494, 0.216 },
+                        { 0.483, 0.243 },
+                        { 0.359, 0.317 },
+                        { 0.308, 0.358 },
+                        { 0.294, 0.339 },
+                        { 0.276, 0.350 },
+                        { 0.259, 0.337 },
+                        { 0.239, 0.352 },
+                        { 0.271, 0.437 },
+                        { 0.277, 0.428 },
+                    },
+                },
+            },
+        },
+
+        -- 6. Willey Hopebreaker (boss 6)
+        {
+            step      = 6,
+            priority  = 1,
+            bossIndex = 6,
+            title     = "Willey Hopebreaker",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 317 },
+                    kind    = "path",
+                    note    = "After defeating ^Commander Malor^, continue southwest through the halls towards ^The Hoard^ and you will eventually reach ^Willey Hopebreaker^.",
+                    minNote = "Southwest to Willey",
+                    points  = {
+                        { 0.277, 0.433 },
+                        { 0.152, 0.558 },
+                        { 0.119, 0.483 },
+                        { 0.087, 0.513 },
+                        { 0.105, 0.556 },
+                        { 0.076, 0.587 },
+                        { 0.059, 0.544 },
+                    },
+                },
+            },
+        },
+
+        -- 7. Instructor Galford (boss 7)
+        {
+            step      = 7,
+            priority  = 1,
+            bossIndex = 7,
+            title     = "Instructor Galford",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 317 },
+                    kind    = "path",
+                    note    = "After killing ^Willey Hopebreaker^, work your way south through the hallways to reach ^Instructor Galford^.",
+                    minNote = "South to Galford",
+                    points  = {
+                        { 0.061, 0.552 },
+                        { 0.074, 0.585 },
+                        { 0.105, 0.557 },
+                        { 0.085, 0.510 },
+                        { 0.118, 0.481 },
+                        { 0.153, 0.560 },
+                        { 0.207, 0.507 },
+                        { 0.232, 0.562 },
+                        { 0.199, 0.588 },
+                        { 0.238, 0.669 },
+                        { 0.211, 0.695 },
+                        { 0.246, 0.773 },
+                    },
+                },
+            },
+        },
+
+        -- 8. Balnazzar (boss 8)
+        {
+            step      = 8,
+            priority  = 1,
+            bossIndex = 8,
+            title     = "Balnazzar",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 317 },
+                    kind    = "path",
+                    note    = "After killing ^Instructor Galford^, go directly across the hall to find the final boss, ^Balnazzar^.",
+                    minNote = "Across hall to Balnazzar",
+                    points  = {
+                        { 0.250, 0.774 },
+                        { 0.228, 0.798 },
+                    },
+                },
+            },
+        },
+
     },
 }

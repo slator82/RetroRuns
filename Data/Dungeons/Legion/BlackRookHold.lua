@@ -12,13 +12,23 @@ RetroRuns_DungeonData[740] = {
     name              = "Black Rook Hold",
     expansion         = "Legion",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "7.0.3",
+    timewalking       = true,
+
+    entrance = {
+        mapID = 641,
+        x     = 0.3710,
+        y     = 0.5017,
+    },
 
     bosses = {
         {
             index              = 1,
             name               = "The Amalgam of Souls",
             journalEncounterID = 1518,
+            -- Criterion prose reads "Amalgam of Souls defeated" and does not carry the journal name.
+            scenarioCriteriaID = 29464,
             achievements       = {
             },
             loot = {
@@ -69,13 +79,9 @@ RetroRuns_DungeonData[740] = {
             index              = 4,
             name               = "Lord Kur'talos Ravencrest",
             journalEncounterID = 1672,
+            -- Criterion prose reads "Lord Ravencrest redeemed" and does not carry the journal name.
+            scenarioCriteriaID = 29467,
             achievements       = {
-                { id = 10804, name = "Black Rook Hold" },
-                { id = 10805, name = "Heroic: Black Rook Hold" },
-                { id = 10806, name = "Mythic: Black Rook Hold" },
-                { id = 60834, name = "Black Rook Hold" },
-                { id = 60835, name = "Heroic: Black Rook Hold" },
-                { id = 60836, name = "Mythic: Black Rook Hold" },
             },
             loot = {
                 { id = 136770, slot = "Back", name = "Drape of the Raven Lord", sources = { [14]=78626, [15]=80816, [16]=78626 } },

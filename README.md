@@ -79,10 +79,15 @@ Currently supports:
 
 That is every legacy raid in the game, Classic through Dragonflight.
 
-**Dungeons** are covered in the transmog browser: all 123 legacy dungeons
-from Classic through Dragonflight, with their bosses and drops, selectable
-from the Type dropdown next to the expansion list. Guided routing for
-dungeons is not in yet.
+**Dungeons** get the same guided routing. Twenty are routed so far: every
+Classic dungeon (Ragefire Chasm, Wailing Caverns, The Stockade, Blackfathom
+Deeps, Gnomeregan, Razorfen Kraul, Razorfen Downs, Uldaman, Zul'Farrak,
+Maraudon, The Temple of Atal'Hakkar, Blackrock Depths, Lower Blackrock
+Spire, the three Dire Maul wings and both Stratholme entrances) plus
+Scarlet Halls and Scarlet Monastery. The rest of the 123 legacy dungeons,
+Classic through Dragonflight, are in the transmog browser with their bosses
+and drops, and their entrances are on the travel plane; routes for them are
+being added.
 
 ## Installation
 
@@ -155,7 +160,7 @@ Main commands, type in chat:
 
 ## Status
 
-Version **2.5.0**
+Version **3.0.0**
 
 ## Reporting bugs / requesting features
 

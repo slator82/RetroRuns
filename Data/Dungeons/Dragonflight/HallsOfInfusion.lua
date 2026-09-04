@@ -12,7 +12,15 @@ RetroRuns_DungeonData[1204] = {
     name              = "Halls of Infusion",
     expansion         = "Dragonflight",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "10.0.2",
+    timewalking       = true,
+
+    entrance = {
+        mapID = 2025,
+        x     = 0.5920,
+        y     = 0.6050,
+    },
 
     gloryMeta = {
         id   = 16295,
@@ -41,7 +49,7 @@ RetroRuns_DungeonData[1204] = {
             name               = "Gulping Goliath",
             journalEncounterID = 2507,
             achievements       = {
-                { id = 16426, name = "Hungry Hungry Hornswog", meta = true },
+                { id = 16426, name = "Hungry Hungry Hornswog", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 193770, slot = "Feet", name = "Swoglet Stompers", sources = { [14]=180872, [15]=180872, [16]=180872 } },
@@ -70,11 +78,8 @@ RetroRuns_DungeonData[1204] = {
             name               = "Primal Tsunami",
             journalEncounterID = 2511,
             achievements       = {
-                { id = 16260, name = "Halls of Infusion" },
-                { id = 16261, name = "Heroic: Halls of Infusion" },
-                { id = 16262, name = "Mythic: Halls of Infusion" },
-                { id = 16427, name = "Go With the Flow", meta = true },
-                { id = 16517, name = "Toxicity Strike Team", meta = true },
+                { id = 16427, name = "Go With the Flow", meta = true, soloable = "yes" },
+                { id = 16517, name = "Toxicity Strike Team", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 193738, slot = "Chest", name = "Robe of Plunging Depths", sources = { [14]=180847, [15]=180847, [16]=180847 } },

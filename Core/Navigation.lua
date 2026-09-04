@@ -97,6 +97,15 @@ function RR:GetBossByEncounterID(encounterID)
         if boss.dungeonEncounterID and boss.dungeonEncounterID == encounterID then
             return boss
         end
+        -- Plural form: one journal boss folding SEVERAL real encounters
+        -- (Sunken Temple's Wardens of the Dream are four dragons, each with
+        -- its own ENCOUNTER_END). Membership resolves the boss; the caller
+        -- tracks which members are down.
+        for _, memberID in ipairs(boss.dungeonEncounterIDs or {}) do
+            if memberID == encounterID then
+                return boss
+            end
+        end
     end
     return nil
 end
@@ -107,12 +116,56 @@ function RR:MarkBossKilledByEncounterID(encounterID)
     if not self.currentRaid or not encounterID then return false end
     local boss = self:GetBossByEncounterID(encounterID)
     if boss then
+        -- A multi-encounter boss is killed when its LAST member falls; a
+        -- member kill short of that records partial progress (persisted,
+        -- so two dead dragons survive a reload) and leaves the step alive.
+        if boss.dungeonEncounterIDs then
+            local partial = self.state.bossPartialKills[boss.index] or {}
+            partial[encounterID] = true
+            self.state.bossPartialKills[boss.index] = partial
+            local down = 0
+            for _, memberID in ipairs(boss.dungeonEncounterIDs) do
+                if partial[memberID] then down = down + 1 end
+            end
+            if self.ZoneLog then
+                self:ZoneLog((
+                    "MarkBossKilledByEncounterID: encounterID %d is member %d/%d of bossIndex %d (%s)"
+                ):format(encounterID, down, #boss.dungeonEncounterIDs,
+                         boss.index, boss.name))
+            end
+            if down < #boss.dungeonEncounterIDs then
+                self:PersistRunProgress()
+                return true
+            end
+        end
         if self.ZoneLog then
             self:ZoneLog((
                 "MarkBossKilledByEncounterID: resolved encounterID %d -> bossIndex %d (%s)"
             ):format(encounterID, boss.index, boss.name))
         end
         self:MarkBossKilled(boss)
+        -- Two boss rows can share ONE explicit dungeonEncounterID when a
+        -- single fight ends both -- Scarlet Monastery of Old's Mograine
+        -- and Whitemane. GetBossByEncounterID returns the first match, so
+        -- the sibling would stay alive forever. Only the EXPLICIT field is
+        -- swept: the EJ-derived path is where the variant bosses live
+        -- (Return to Karazhan's Opera, Zul'Gurub's Cache of Madness), and
+        -- there only ONE of the set actually occurs, so marking them all
+        -- would credit kills that never happened.
+        if boss.dungeonEncounterID == encounterID then
+            for _, sibling in ipairs(self.currentRaid.bosses or {}) do
+                if sibling ~= boss
+                    and sibling.dungeonEncounterID == encounterID
+                    and not self:IsBossKilled(sibling.index) then
+                    if self.ZoneLog then
+                        self:ZoneLog((
+                            "MarkBossKilledByEncounterID: encounterID %d also ends bossIndex %d (%s)"
+                        ):format(encounterID, sibling.index, sibling.name))
+                    end
+                    self:MarkBossKilled(sibling)
+                end
+            end
+        end
         self:ComputeNextStep()
         return true
     else
@@ -137,6 +190,10 @@ function RR:MarkBossKilled(boss)
     if not boss then return end
     self.state.bossesKilled[boss.index] = true
     self.state.bossesKilledViaPairOnly[boss.index] = nil
+    -- An instance the server does not save carries no other record of this
+    -- kill, so it is written down here rather than at a later checkpoint --
+    -- the client can stop at any moment.
+    self:PersistRunProgress()
 end
 
 function RR:MarkBossKilledByEncounterName(encounterName)
@@ -166,6 +223,7 @@ end
 function RR:ClearBossState()
     wipe(self.state.bossesKilled)
     wipe(self.state.bossesKilledViaPairOnly)
+    wipe(self.state.bossPartialKills)
     wipe(self.state.bossesSkipped)
 end
 
@@ -269,9 +327,10 @@ function RR:IsActiveRouteComplete()
     local activeBucket = self:FoldDifficulty(self.currentRaid, self.state.currentDifficultyID)
     for _, step in ipairs(routing) do
         local boss = self:GetBossByIndex(step.bossIndex)
-        local availableHere = (not activeBucket)
-            or (not boss)
-            or self:BossAvailableInBucket(boss, activeBucket)
+        local availableHere = (not boss)
+            or (self:BossAvailableToFaction(boss)
+                and ((not activeBucket)
+                     or self:BossAvailableInBucket(boss, activeBucket)))
         -- Optional bosses don't hold the route open.
         if availableHere
             and step.bossIndex
@@ -298,6 +357,28 @@ function RR:ActiveRouteSkippedOptionalBoss()
     return false
 end
 
+-- True when every boss the active route left alive sits behind a skip the
+-- player cannot take back (step.skipIrreversible) -- Cho'Rush turns friendly
+-- once the king is dead. The completion screen reads this to drop its
+-- "return and kill" invitation, which would otherwise promise a kill the
+-- instance no longer offers; the reset reminder beneath it stays, and a
+-- reset genuinely is the way back.
+function RR:SkippedBossesUnreturnable()
+    local routing = self:GetActiveRouting()
+    if not routing then return false end
+    local skipped, irreversible = 0, 0
+    for _, step in ipairs(routing) do
+        if step.optional and step.bossIndex
+            and not self:IsBossKilled(step.bossIndex) then
+            skipped = skipped + 1
+            if step.skipIrreversible then
+                irreversible = irreversible + 1
+            end
+        end
+    end
+    return skipped > 0 and skipped == irreversible
+end
+
 function RR:GetAvailableSteps()
     local results = {}
     local routing = self:GetActiveRouting()
@@ -306,9 +387,10 @@ function RR:GetAvailableSteps()
     local activeBucket = self:FoldDifficulty(self.currentRaid, self.state.currentDifficultyID)
     for _, step in ipairs(routing) do
         local boss = self:GetBossByIndex(step.bossIndex)
-        local availableHere = (not activeBucket)
-            or (not boss)
-            or self:BossAvailableInBucket(boss, activeBucket)
+        local availableHere = (not boss)
+            or (self:BossAvailableToFaction(boss)
+                and ((not activeBucket)
+                     or self:BossAvailableInBucket(boss, activeBucket)))
         if availableHere
             and not self:IsBossKilled(step.bossIndex)
             and not self:IsBossSkipped(step.bossIndex)
@@ -437,9 +519,19 @@ end
 -- GetSavedInstanceInfo's numEncounters.
 function RR:GetRaidProgressCounts()
     if not self.currentRaid then return 0, 0 end
-    local total, killed = #self.currentRaid.bosses, 0
+    local activeBucket =
+        self:FoldDifficulty(self.currentRaid, self.state.currentDifficultyID)
+    local total, killed = 0, 0
     for _, boss in ipairs(self.currentRaid.bosses) do
-        if self:IsBossKilled(boss.index) then killed = killed + 1 end
+        -- A boss the character cannot reach here -- wrong faction, or a
+        -- difficulty this one does not appear at -- is left out of both
+        -- halves, so a full clear reads complete.
+        if self:BossAvailableToFaction(boss)
+            and ((not activeBucket)
+                 or self:BossAvailableInBucket(boss, activeBucket)) then
+            total = total + 1
+            if self:IsBossKilled(boss.index) then killed = killed + 1 end
+        end
     end
     return killed, total
 end
@@ -581,9 +673,12 @@ function RR:GetRouteBossOrder()
     return order
 end
 
+-- Returns the checklist lines, plus a parallel table of advisory notes
+-- keyed by line number. A line with a note gets a hover region in the
+-- panel; the caution glyph is meaningless until something explains it.
 function RR:GetProgressLines()
-    local lines = {}
-    if not self.currentRaid then return lines end
+    local lines, notes = {}, {}
+    if not self.currentRaid then return lines, notes end
     -- All three states are bracket + 12px element + bracket, so boss names
     -- left-align at any font size.
     local KILLED_GLYPH  = "|TInterface\\RaidFrame\\ReadyCheck-Ready:12:12|t"
@@ -593,6 +688,9 @@ function RR:GetProgressLines()
     -- Transparent 1x1 stretched to 12px: reserves the slot width with no
     -- visible mark, so pending rows align with killed/active rows.
     local PENDING_GLYPH = "|TInterface\\Common\\Spacer:12:12|t"
+    -- A boss this character cannot engage at all. Distinct from the
+    -- blank pending slot, which reads as "not yet".
+    local LOCKED_GLYPH  = "|TInterface\\PetBattles\\PetBattle-LockIcon:12:12:0:0|t"
 
     -- Two orderings. "rr" lists bosses in the order navigation directs
     -- the player to kill them (GetRouteBossOrder, which simulates the
@@ -603,6 +701,20 @@ function RR:GetProgressLines()
         order = self.currentRaid.bosses
     else
         order = self:GetRouteBossOrder()
+        -- A boss the active route never directs the player to still exists,
+        -- still drops loot and can still be killed, so it belongs on the
+        -- checklist: routed bosses lead, the rest follow in journal order.
+        -- Without this a partially routed instance shows only its routed
+        -- bosses -- one authored step renders a one-boss list.
+        local routed = {}
+        for _, boss in ipairs(order) do
+            routed[boss.index] = true
+        end
+        for _, boss in ipairs(self.currentRaid.bosses) do
+            if not routed[boss.index] then
+                table.insert(order, boss)
+            end
+        end
     end
 
     -- A boss unavailable here renders grayed and uncounted, not hidden.
@@ -617,24 +729,54 @@ function RR:GetProgressLines()
         -- magenta control that did it. Appended AFTER the name's closing |r
         -- -- color codes do not nest.
         local optionalTag = ""
+        -- A boss whose death the server never reports takes the caution
+        -- glyph in the STATE BRACKET, where the check or the arrow would
+        -- go: the bracket is what says how the row stands, and for this
+        -- boss the honest answer is that the panel cannot know. It is not
+        -- "restricted" -- the player can walk in and kill it -- so it
+        -- takes no lock and no difficulty tag.
+        local killUntracked = self:IsBossKillUntracked(boss)
         if self:IsBossSkipped(boss.index) then
             optionalTag = " |cffF259C7" .. RR.L["(skipped)"] .. "|r"
         elseif self:IsBossOptional(boss.index) then
             optionalTag = " |cff808080" .. RR.L["(optional)"] .. "|r"
         end
-        local restrictedHere = activeBucket
-            and not self:BossAvailableInBucket(boss, activeBucket)
+        local wrongFaction   = not self:BossAvailableToFaction(boss)
+        local restrictedHere = wrongFaction or (activeBucket
+            and not self:BossAvailableInBucket(boss, activeBucket))
 
         if restrictedHere then
-            -- Tagged with the difficulty it needs.
-            local allowed = boss.availableDifficulties or {}
-            local names = {}
-            for _, b in ipairs(allowed) do
-                names[#names + 1] = BUCKET_NAME[b] or tostring(b)
+            -- Both reasons mean the same thing on the row: this boss cannot
+            -- be engaged here. Only the tag says which.
+            local tag
+            if wrongFaction then
+                -- The client's own faction name, so the tag carries no
+                -- locale entry of its own.
+                local factionName = (boss.faction == "Horde")
+                    and FACTION_HORDE or FACTION_ALLIANCE
+                tag = (" |cff808080(%s %s)|r")
+                    :format(factionName or boss.faction, RR.L["only"])
+            else
+                -- Tagged with the difficulty it needs.
+                local allowed = boss.availableDifficulties or {}
+                local names = {}
+                for _, b in ipairs(allowed) do
+                    names[#names + 1] = BUCKET_NAME[b] or tostring(b)
+                end
+                tag = (#names > 0)
+                    and (" |cff808080(" .. table.concat(names, "/")
+                         .. " " .. RR.L["only"] .. ")|r")
+                    or ""
             end
-            local tag = (#names > 0) and (" |cff808080(" .. table.concat(names, "/") .. " " .. RR.L["only"] .. ")|r") or ""
             table.insert(lines, ("|cff9d9d9d[|r%s|cff9d9d9d]|r |cff808080%s|r%s%s"):format(
-                PENDING_GLYPH, displayName, tag, optionalTag))
+                LOCKED_GLYPH, displayName, tag, optionalTag))
+        elseif killUntracked then
+            -- Untracked: gray brackets framing the caution glyph. Name gray
+            -- like a pending row, because the boss may well be dead and the
+            -- panel has no way to find out.
+            table.insert(lines, ("|cff9d9d9d[|r%s|cff9d9d9d]|r |cff9d9d9d%s|r%s"):format(
+                (RR.UI and RR.UI.CAUTION_GLYPH or PENDING_GLYPH),
+                displayName, optionalTag))
         elseif self.state.bossesKilled[boss.index] then
             -- Killed: gray brackets framing the green check (native green,
             -- unaffected by color codes). Name green.
@@ -651,8 +793,12 @@ function RR:GetProgressLines()
             table.insert(lines, ("|cff9d9d9d[|r%s|cff9d9d9d]|r |cff9d9d9d%s|r%s"):format(
                 PENDING_GLYPH, displayName, optionalTag))
         end
+        -- Exactly one line went in this pass, so #lines is its number.
+        if killUntracked and boss.killUntrackedNote then
+            notes[#lines] = RR.L[boss.killUntrackedNote]
+        end
     end
-    return lines
+    return lines, notes
 end
 
 -------------------------------------------------------------------------------
@@ -726,53 +872,46 @@ end
 local dialogTriggerFrame = nil
 
 local function DialogTriggerHandler(_, event, ...)
-    -- pcall wrap so a malformed chat payload doesn't error mid-route.
-    local args = { event, ... }
-    local ok, err = pcall(function()
-        local text   = args[2]   -- arg1 = dialog text
-        local sender = args[3]   -- arg2 = speaker name
+    local text   = ...            -- arg1 = dialog text
+    local sender = select(2, ...) -- arg2 = speaker name
 
-        -- Log before any guard; every exit below names the guard that fired.
-        local payloadIsSecret = issecretvalue
-            and (issecretvalue(text) or issecretvalue(sender)) or false
-        if RR.ZoneLog then
-            if payloadIsSecret then
-                RR:ZoneLog("[DialogTrigger] heard: (secret payload)")
-            else
-                local shown = tostring(text)
-                if #shown > 120 then shown = RR.Utf8SafeTruncate(shown, 120) .. "..." end
-                RR:ZoneLog(("[DialogTrigger] heard: npc=%q text=%q")
-                    :format(tostring(sender or ""), shown))
-            end
-        end
-
-        -- Secret-tainted payloads can't be compared.
+    -- Log before any guard; every exit below names the guard that fired.
+    local payloadIsSecret = issecretvalue
+        and (issecretvalue(text) or issecretvalue(sender)) or false
+    if RR.ZoneLog then
         if payloadIsSecret then
-            RR:ZoneLog("[DialogTrigger] dropped: secret payload")
-            return
+            RR:ZoneLog("[DialogTrigger] heard: (secret payload)")
+        else
+            local shown = tostring(text)
+            if #shown > 120 then shown = RR.Utf8SafeTruncate(shown, 120) .. "..." end
+            RR:ZoneLog(("[DialogTrigger] heard: npc=%q text=%q")
+                :format(tostring(sender or ""), shown))
         end
-        -- Text is required, sender is not -- boss emotes have no speaker.
-        if not text then
-            RR:ZoneLog("[DialogTrigger] dropped: no text")
-            return
-        end
-
-        local step = RR.state and RR.state.activeStep
-        if not step or not step.segments then
-            RR:ZoneLog("[DialogTrigger] dropped: no active step with segments")
-            return
-        end
-        local stepIndex = step.step or step.priority or 0
-        RR:ZoneLog(("[DialogTrigger] matching against step %d (%d segs)")
-            :format(stepIndex, #step.segments))
-
-        RR:AdvanceProgress("npc-dialog", { npc = sender, text = text })
-        RR.UI.Update()
-        if RetroRunsMapOverlay then RetroRunsMapOverlay:Refresh() end
-    end)
-    if not ok then
-        RR:ZoneLog("[DialogTrigger] handler crash: " .. tostring(err))
     end
+
+    -- Secret-tainted payloads can't be compared.
+    if payloadIsSecret then
+        RR:ZoneLog("[DialogTrigger] dropped: secret payload")
+        return
+    end
+    -- Text is required, sender is not -- boss emotes have no speaker.
+    if not text then
+        RR:ZoneLog("[DialogTrigger] dropped: no text")
+        return
+    end
+
+    local step = RR.state and RR.state.activeStep
+    if not step or not step.segments then
+        RR:ZoneLog("[DialogTrigger] dropped: no active step with segments")
+        return
+    end
+    local stepIndex = step.step or step.priority or 0
+    RR:ZoneLog(("[DialogTrigger] matching against step %d (%d segs)")
+        :format(stepIndex, #step.segments))
+
+    RR:AdvanceProgress("npc-dialog", { npc = sender, text = text })
+    RR.UI.Update()
+    if RetroRunsMapOverlay then RetroRunsMapOverlay:Refresh() end
 end
 
 -- Drive the dialog path exactly as a real chat event would, including

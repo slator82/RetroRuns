@@ -12,7 +12,15 @@ RetroRuns_DungeonData[69] = {
     name              = "Lost City of the Tol'vir",
     expansion         = "Cataclysm",
     difficultyModel   = "dungeonBinary",
+    availableDifficulties = { 14, 15, 24 },
     patch             = "4.0.3",
+    timewalking       = true,
+
+    entrance = {
+        mapID = 249,
+        x     = 0.6056,
+        y     = 0.6439,
+    },
 
     gloryMeta = {
         id   = 4845,
@@ -30,10 +38,10 @@ RetroRuns_DungeonData[69] = {
             achievements       = {
             },
             loot = {
-                { id = 56379, slot = "Back", name = "Kaleki Cloak", sources = { [14]=27698 } },
-                { id = 56381, slot = "Feet", name = "Greaves of Wu the Elder", sources = { [14]=27699 } },
-                { id = 56383, slot = "Hands", name = "Ionic Gloves", sources = { [14]=27701 } },
-                { id = 56382, slot = "Two-Hand", name = "Seliza's Spear", sources = { [14]=27700 } },
+                { id = 56379, slot = "Back", name = "Kaleki Cloak", sources = { [14]=27698, [15]=27698 } },
+                { id = 56381, slot = "Feet", name = "Greaves of Wu the Elder", sources = { [14]=27699, [15]=27699 } },
+                { id = 56383, slot = "Hands", name = "Ionic Gloves", sources = { [14]=27701, [15]=27701 } },
+                { id = 56382, slot = "Two-Hand", name = "Seliza's Spear", sources = { [14]=27700, [15]=27700 } },
             },
         },
         {
@@ -41,13 +49,13 @@ RetroRuns_DungeonData[69] = {
             name               = "Lockmaw",
             journalEncounterID = 118,
             achievements       = {
-                { id = 5291, name = "Acrocalypse Now", meta = true },
+                { id = 5291, name = "Acrocalypse Now", meta = true, soloable = "yes" },
             },
             loot = {
-                { id = 56387, slot = "Feet", name = "Greaves of Wu the Younger", sources = { [14]=27704 } },
-                { id = 56386, slot = "Legs", name = "Balkar's Waders", sources = { [14]=27703 } },
-                { id = 56384, slot = "Weapon", name = "Resonant Kris", sources = { [14]=27702 } },
-                { id = 133280, slot = "Wrist", name = "Oasis Bracers", sources = { [14]=76636 }, timewalkingOnly = true },
+                { id = 56387, slot = "Feet", name = "Greaves of Wu the Younger", sources = { [14]=27704, [15]=27704 } },
+                { id = 56386, slot = "Legs", name = "Balkar's Waders", sources = { [14]=27703, [15]=27703 } },
+                { id = 56384, slot = "Weapon", name = "Resonant Kris", sources = { [14]=27702, [15]=27702 } },
+                { id = 133280, slot = "Wrist", name = "Oasis Bracers", sources = { [24]=76636 } },
             },
         },
         {
@@ -55,12 +63,12 @@ RetroRuns_DungeonData[69] = {
             name               = "High Prophet Barim",
             journalEncounterID = 119,
             achievements       = {
-                { id = 5290, name = "Kill It With Fire!", meta = true },
+                { id = 5290, name = "Kill It With Fire!", meta = true, soloable = "kinda" },
             },
             loot = {
-                { id = 56392, slot = "Waist", name = "Sand Dune Belt", sources = { [14]=27707 } },
-                { id = 56390, slot = "Weapon", name = "Barim's Main Gauche", sources = { [14]=27706 } },
-                { id = 56389, slot = "Wrist", name = "Sand Silk Wristband", sources = { [14]=27705 } },
+                { id = 56392, slot = "Waist", name = "Sand Dune Belt", sources = { [14]=27707, [15]=27707 } },
+                { id = 56390, slot = "Weapon", name = "Barim's Main Gauche", sources = { [14]=27706, [15]=27706 } },
+                { id = 56389, slot = "Wrist", name = "Sand Silk Wristband", sources = { [14]=27705, [15]=27705 } },
             },
         },
         {
@@ -68,20 +76,18 @@ RetroRuns_DungeonData[69] = {
             name               = "Siamat",
             journalEncounterID = 122,
             achievements       = {
-                { id = 4848, name = "Lost City of the Tol'vir" },
-                { id = 5066, name = "Heroic: Lost City of the Tol'vir" },
-                { id = 5292, name = "Headed South", meta = true },
-                { id = 5294, name = "Straw That Broke the Camel's Back", meta = true },
+                { id = 5292, name = "Headed South", meta = true, soloable = "yes" },
+                { id = 5294, name = "Straw That Broke the Camel's Back", meta = true, soloable = "yes" },
             },
             loot = {
-                { id = 56397, slot = "Back", name = "Geordan's Cloak", sources = { [14]=27710 } },
-                { id = 56395, slot = "Feet", name = "Crafty's Gaiters", sources = { [14]=27708 } },
-                { id = 56401, slot = "Legs", name = "Leggings of the Path", sources = { [14]=27712 } },
-                { id = 56402, slot = "Off-hand", name = "Zora's Ward", sources = { [14]=27713 } },
-                { id = 56399, slot = "Shoulder", name = "Mantle of Master Cho", sources = { [14]=27711 } },
-                { id = 56403, slot = "Waist", name = "Evelyn's Belt", sources = { [14]=27714 } },
-                { id = 56396, slot = "Weapon", name = "Hammer of Sparks", sources = { [14]=27709 } },
-                { id = 157599, slot = "Weapon", name = "Sceptre of Swirling Winds", sources = { [14]=93788 } },
+                { id = 56397, slot = "Back", name = "Geordan's Cloak", sources = { [14]=27710, [15]=27710 } },
+                { id = 56395, slot = "Feet", name = "Crafty's Gaiters", sources = { [14]=27708, [15]=27708 } },
+                { id = 56401, slot = "Legs", name = "Leggings of the Path", sources = { [14]=27712, [15]=27712 } },
+                { id = 56402, slot = "Off-hand", name = "Zora's Ward", sources = { [14]=27713, [15]=27713 } },
+                { id = 56399, slot = "Shoulder", name = "Mantle of Master Cho", sources = { [14]=27711, [15]=27711 } },
+                { id = 56403, slot = "Waist", name = "Evelyn's Belt", sources = { [14]=27714, [15]=27714 } },
+                { id = 56396, slot = "Weapon", name = "Hammer of Sparks", sources = { [14]=27709, [15]=27709 } },
+                { id = 157599, slot = "Weapon", name = "Sceptre of Swirling Winds", sources = { [14]=93788, [15]=93788 } },
             },
         },
     },

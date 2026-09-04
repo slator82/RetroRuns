@@ -5,7 +5,7 @@
 -------------------------------------------------------------------------------
 
 local ADDON_NAME = "RetroRuns"
-local VERSION    = "2.5.0"
+local VERSION    = "3.0.0"
 
 -------------------------------------------------------------------------------
 -- Namespace
@@ -30,6 +30,7 @@ RetroRuns = {
         bossesKilled          = {},   -- [bossIndex] = true
         -- Kills known only from the shared-lockout sibling's saved row.
         bossesKilledViaPairOnly = {},
+        bossPartialKills = {},   -- bossIndex -> { [dungeonEncounterID]=true }
         -- Optional bosses the player chose to bypass. Same key space and
         -- lifetime as bossesKilled, so every reset that clears kills
         -- clears these too.
@@ -59,8 +60,19 @@ RetroRuns = {
         windowScale  = 1.0,
         fontSize     = 12,
         panelOpacity = 1.0,
+        -- Legacy CENTER-relative offsets. Kept only as the migration
+        -- source; the live anchor is panelAnchorX/Y below.
         panelX       = 0,
         panelY       = 0,
+        -- TOPLEFT-relative anchor (panelAnchorY is negative, downward).
+        -- Top-left is what every layout path already pins, and unlike a
+        -- CENTER offset it does not depend on the frame's SIZE -- which is
+        -- what broke: quitting minimized saved the 44-tall bar's center,
+        -- and the restore applied it to the 460-tall frame, putting the top
+        -- edge (460-44)/2 = 208px out, compounding every launch.
+        -- panelAnchorSet gates the one-time migration and is cleared by
+        -- Reset to Defaults, so a reset re-derives from panelX/panelY = 0.
+        panelAnchorSet = false,
         settingsX    = 290,
         settingsY    = 60,
         -- Compact title-bar mode (toggled via the minimize button).
@@ -89,10 +101,14 @@ RetroRuns = {
         -- toasterDuration: seconds a toast stays at full opacity before fading.
         -- User-adjustable in Customize (1.5..8.0). Floor keeps a two-line name
         -- readable.
-        toasterDuration = 3.0,
+        toasterDuration = 5.0,
         -- toasterStayUntilClick: when true, toasts never auto-fade -- they hold
         -- until the user clicks them to dismiss. Overrides toasterDuration.
         toasterStayUntilClick = false,
+        -- mapPois: the always-on map POI layer (vendors, rares, doors).
+        -- Toggled by the checkbox on the world map; route markers are
+        -- unaffected.
+        mapPois = true,
     },
 }
 
@@ -124,6 +140,11 @@ function RR:Print(msg)
     DEFAULT_CHAT_FRAME:AddMessage(
         "|cff4DCCFFR|cffF259C7R|r|cff7f7f7f:|r " .. tostring(msg))
 end
+
+-- Caret-span highlight color, shared. Proper nouns in authored prose and
+-- in map-marker hints wear the same orange; it lived as a literal in two
+-- files and the second copy was written from the first by hand.
+RR.C_ORANGE = "ff7f00"
 
 -- Queue a chat line to print after the login version banner. Prints
 -- immediately once the banner has fired; before that, holds the line so
@@ -240,9 +261,273 @@ end
 ---   WAYPOINT SLOT: WUI -> TomTom -> Blizzard fallback.
 --- Both slots can fire on one click (e.g. Zygor route + WUI overlay).
 --- The Blizzard fallback only fires if neither slot produced a UI.
+--- The entrance a plane navigates to. Most instances carry one position;
+--- an instance whose two factions walk in from different places carries an
+--- alliance/horde pair instead and the player's own faction picks. Callers
+--- always get a flat { mapID, x, y } either way, so nothing downstream has
+--- to know which shape the data file used.
 function RR:GetRaidEntrance(raid)
     if not raid then return nil end
-    return raid.entrance
+    local entrance = raid.entrance
+    if type(entrance) ~= "table" then return nil end
+    if entrance.alliance or entrance.horde then
+        -- Anything that is not Horde takes the Alliance side, which covers
+        -- the neutral pandaren case without a third branch.
+        if UnitFactionGroup("player") == "Horde" then
+            return entrance.horde or entrance.alliance
+        end
+        return entrance.alliance or entrance.horde
+    end
+    return entrance
+end
+
+-- True when an instance carries a step-by-step route. Dungeons ship for
+-- transmog browsing and entrance navigation first and gain routing in
+-- phases, so the idle list dims the ones that cannot be run yet.
+function RR:InstanceHasRouting(instance)
+    return type(instance) == "table"
+        and type(instance.routing) == "table"
+        and #instance.routing > 0
+end
+
+-- Which expansion's Timewalking is running right now, as one of our own
+-- expansion names, or nil when none is.
+--
+-- Read from the group finder rather than the calendar. The calendar route
+-- needs per-REGION event ids -- the same Timewalking week carries different
+-- ids on US, EU, KO and TW -- plus a walk of many months to find them; the
+-- random-dungeon list is the client answering directly, in whatever region
+-- it is running.
+--
+-- Every Timewalking random is listed at once, one per expansion, whether
+-- or not its week is live, and `isTimeWalker` (GetLFGDungeonInfo's 18th
+-- return) reads false on all of them. IsLFGDungeonJoinable's first return,
+-- isAvailableForAll, is true only for the running event.
+--
+-- Difficulty 24 is Timewalking -- the same bucket the dungeon data keys its
+-- Timewalking-only appearances under -- and it separates a Timewalking week
+-- from the other joinable holiday dungeons (Headless Horseman and friends).
+-- Tested rather than an id list on purpose: a hardcoded list written before
+-- Dragonflight would already be missing 3143.
+--
+-- KNOWN LIMIT: the random list is what THIS character may queue for, so a
+-- character under the event's level floor sees nothing and this reports
+-- nil. It is a display hint, never a gate on data.
+--
+-- The guards below cover secret values on tainted paths; they cost one
+-- call each.
+local timewalkingCache, timewalkingCacheAt = nil, 0
+local TIMEWALKING_CACHE_SECONDS = 30
+
+function RR:GetActiveTimewalkingExpansion()
+    local now = GetTime and GetTime() or 0
+    if timewalkingCacheAt > 0
+        and (now - timewalkingCacheAt) < TIMEWALKING_CACHE_SECONDS then
+        return timewalkingCache
+    end
+    timewalkingCacheAt = now
+    timewalkingCache = nil
+
+    if not (GetNumRandomDungeons and GetLFGRandomDungeonInfo
+            and GetLFGDungeonInfo and IsLFGDungeonJoinable) then
+        return nil
+    end
+    local total = GetNumRandomDungeons() or 0
+    -- An empty list means the client has not delivered its lock info yet
+    -- (the first paint after login lands here), not that no week is live.
+    -- Leave the cache unstamped so the next ask retries instead of pinning
+    -- "no event" for 30 seconds.
+    if total == 0 then
+        timewalkingCacheAt = 0
+        return nil
+    end
+    for index = 1, total do
+        local dungeonID = GetLFGRandomDungeonInfo(index)
+        if dungeonID then
+            local _, _, _, _, _, _, _, _, expansionLevel,
+                  _, _, difficulty = GetLFGDungeonInfo(dungeonID)
+            local joinable = IsLFGDungeonJoinable(dungeonID)
+            local tainted = issecretvalue
+                and (issecretvalue(expansionLevel)
+                     or issecretvalue(difficulty) or issecretvalue(joinable))
+            if not tainted and joinable and difficulty == 24
+                and expansionLevel then
+                -- expansionLevel counts up from 0 at Classic; our list runs
+                -- newest first. Derived rather than a second table, so a new
+                -- expansion added to that one list is picked up here too.
+                local order = RR.EXPANSION_ORDER_NEWEST_FIRST
+                local name = order and order[#order - expansionLevel]
+                if name then
+                    timewalkingCache = name
+                    return name
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- The lock-info push the login paint was missing (LFG_LOCK_INFO_RECEIVED).
+-- Re-ask with the cache cleared; repaint only when the answer actually
+-- moved, since other addons request this info too and the event re-fires.
+function RR:RefreshTimewalkingFromLockInfo()
+    local previous = timewalkingCache
+    timewalkingCacheAt = 0
+    if self:GetActiveTimewalkingExpansion() ~= previous
+        and self.UI and self.UI.Update then
+        if self.UI.InvalidateIdleListCache then
+            self.UI.InvalidateIdleListCache()
+        end
+        self.UI.Update()
+    end
+end
+
+-- When the running Timewalking week ends: days remaining, and the calendar
+-- day it closes on. Returns nil for both when it cannot be determined.
+--
+-- The group finder knows WHICH expansion is running but not for how long,
+-- so the end date has to come off the calendar. The trap there is that
+-- Timewalking calendar event ids are per-REGION -- there are four regional
+-- tables of them -- so matching by id would need a table that rots.
+--
+-- Matched by TITLE against PLAYER_DIFFICULTY_TIMEWALKER instead, the
+-- client's own localized word for the difficulty. Blizzard names the event
+-- with that word, so
+-- the match holds in every locale without an id table anywhere. If a locale
+-- inflects the word so the match fails, the date simply goes unreported --
+-- the marker still shows.
+--
+-- Walked forward from today rather than over the whole calendar: the event
+-- runs about a week, so this month and the next cannot miss it, where a full
+-- walk would span 36 months for no gain.
+local twEndCache, twEndCacheAt = nil, 0
+local TW_END_CACHE_SECONDS = 900   -- a date does not move; this is for logins
+-- A read that FOUND nothing is held for seconds, not minutes. The calendar
+-- answers empty until its data arrives, so the first read after a login or a
+-- zone routinely misses -- and caching that miss for the full window leaves
+-- the marker untinted for a quarter of an hour with the week still running.
+local TW_END_RETRY_SECONDS = 15
+
+function RR:GetTimewalkingEnd()
+    local now = GetTime and GetTime() or 0
+    local window = twEndCache and TW_END_CACHE_SECONDS or TW_END_RETRY_SECONDS
+    if twEndCacheAt > 0 and (now - twEndCacheAt) < window then
+        if not twEndCache then return nil end
+        return twEndCache.days, twEndCache.month, twEndCache.day,
+               twEndCache.hour, twEndCache.minute
+    end
+    twEndCacheAt = now
+    twEndCache = nil
+
+    local term = PLAYER_DIFFICULTY_TIMEWALKER
+    if not term or term == "" then return nil end
+    if not (C_Calendar and C_Calendar.GetNumDayEvents and C_Calendar.GetDayEvent
+            and C_Calendar.GetMonthInfo and C_DateAndTime
+            and C_DateAndTime.GetCurrentCalendarTime) then
+        return nil
+    end
+    -- The calendar answers empty until it has been opened once.
+    if C_Calendar.OpenCalendar then C_Calendar.OpenCalendar() end
+    local today = C_DateAndTime.GetCurrentCalendarTime()
+    if not today or not today.monthDay then return nil end
+
+    local thisMonth = C_Calendar.GetMonthInfo(0)
+    local daysThisMonth = (thisMonth and thisMonth.numDays) or 31
+
+    for monthOffset = 0, 1 do
+        local firstDay = (monthOffset == 0) and today.monthDay or 1
+        local lastDay = (monthOffset == 0) and daysThisMonth or 31
+        for day = firstDay, lastDay do
+            local count = C_Calendar.GetNumDayEvents(monthOffset, day) or 0
+            for index = 1, count do
+                local event = C_Calendar.GetDayEvent(monthOffset, day, index)
+                local title = event and event.title
+                -- Secret-tainted titles error on find(); skip rather than raise.
+                local tainted = issecretvalue and title
+                    and issecretvalue(title)
+                if title and not tainted
+                    and title:find(term, 1, true)
+                    and event.sequenceType == "END" then
+                    local ahead = (monthOffset == 0)
+                        and (day - today.monthDay)
+                        or (daysThisMonth - today.monthDay + day)
+                    local info = C_Calendar.GetMonthInfo(monthOffset)
+                    -- The END entry's own time is the hour the week closes
+                    -- (a Monday 11:00 start ends the following Monday at
+                    -- 10:00, an hour shy of seven days).
+                    -- Carried so the last day can be reported in hours
+                    -- rather than rounded to a day that is already over.
+                    -- endTime, not startTime: on an END entry startTime is
+                    -- the segment's start and endTime is when the week
+                    -- actually closes.
+                    local at = event.endTime or event.startTime
+                    twEndCache = {
+                        days   = ahead,
+                        month  = info and info.month or nil,
+                        day    = day,
+                        hour   = at and at.hour or nil,
+                        minute = at and at.minute or nil,
+                    }
+                    return ahead, twEndCache.month, day,
+                           twEndCache.hour, twEndCache.minute
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- True when this instance itself offers a Timewalking run, ignoring
+-- whether the week is currently running.
+--
+-- Reads the data files' `timewalking` field, which the dungeon generator
+-- emits from db2's MapDifficulty (difficulty 24; the three raids carrying
+-- 33 have it by hand). NOT the [24] loot bucket: the 6.2 reprint items
+-- track the ORIGINAL rotation (Ahn'kahet, Utgarde Pinnacle carry reprints
+-- but cannot host a TW run today), while Utgarde Keep, Azjol-Nerub and
+-- The Forge of Souls run TW with no reprints at all. Capability and loot
+-- diverge, so they are separate signals.
+function RR:InstanceOffersTimewalking(instance)
+    return type(instance) == "table" and instance.timewalking == true
+end
+
+-- True when this instance can be run at Timewalking RIGHT NOW: it offers a
+-- Timewalking version and its expansion is the week that is live.
+function RR:IsTimewalkingLive(instance)
+    if not self:InstanceOffersTimewalking(instance) then return false end
+    local active = self:GetActiveTimewalkingExpansion()
+    return active ~= nil and instance.expansion == active
+end
+
+-- True when this instance's expansion is the one Timewalking is running
+-- for. Dungeon-only: raid Timewalking is a separate rotation the group
+-- finder does not answer for this way.
+function RR:IsTimewalkingActiveFor(instance)
+    if not instance or instance.kind ~= "dungeon" then return false end
+    local active = self:GetActiveTimewalkingExpansion()
+    return active ~= nil and instance.expansion == active
+end
+
+-- True when a dungeon sits in the CURRENT Mythic+ season. Read at runtime
+-- from the client rather than authored: the pool rotates every season, so
+-- any table we wrote would go stale. GetMapTable returns challenge map
+-- ids, which ChallengeMaps.lua translates to our instance map ids.
+--
+-- Seasonal treatment is per DIFFICULTY, not per dungeon: a dungeon in the
+-- pool is not soloable at Mythic while its Normal and Heroic are
+-- unaffected.
+function RR:IsSeasonalDungeon(instance)
+    if not instance or instance.kind ~= "dungeon" then return false end
+    if not (C_ChallengeMode and C_ChallengeMode.GetMapTable) then return false end
+    local translation = RetroRuns_DungeonMeta
+        and RetroRuns_DungeonMeta.challengeMapToInstance
+    if not translation then return false end
+    for _, challengeMapID in ipairs(C_ChallengeMode.GetMapTable() or {}) do
+        if translation[challengeMapID] == instance.instanceID then
+            return true
+        end
+    end
+    return false
 end
 
 --- Drops a waypoint across the provider stack, returning which slots fired.
@@ -370,7 +655,7 @@ end
 function RR:NavigateToEntrance(raid)
     local entrance = self:GetRaidEntrance(raid)
     if not raid or not entrance then
-        self:Print(RR.L["No entrance data for that raid."])
+        self:Print(RR.L["No entrance data for that instance."])
         return nil
     end
     if not entrance.mapID or not entrance.x or not entrance.y then
@@ -696,7 +981,10 @@ local function CollectRaidDataIssues(scopeFilter)
     -- Single-table validator. Called once for the shared table and once
     -- for the Horde-specific table (which holds parallel raid data for
     -- faction-asymmetric raids; currently only BfD).
-    local function validateTable(tbl, tableLabel)
+    -- routingOptional: dungeons ship browsable and gain routes in phases, so
+    -- an absent route is a valid shipped state there, not a defect. Every
+    -- other rule applies to both trees.
+    local function validateTable(tbl, tableLabel, routingOptional)
         if type(tbl) ~= "table" then return end
         for instanceID, raid in pairs(tbl) do
             local raidName = raid.name or ("?@" .. tostring(instanceID))
@@ -719,7 +1007,14 @@ local function CollectRaidDataIssues(scopeFilter)
             if type(raid.bosses) ~= "table" or #raid.bosses == 0 then
                 add("error", raidLabel, "missing or empty bosses table")
             end
-            if type(raid.routing) ~= "table" or #raid.routing == 0 then
+            if raid.routing == nil then
+                -- Absent is legal only where routing is optional.
+                if not routingOptional then
+                    add("error", raidLabel, "missing or empty routing table")
+                end
+            elseif type(raid.routing) ~= "table" or #raid.routing == 0 then
+                -- Present but unusable is a defect in either tree: the key
+                -- was authored and says nothing.
                 add("error", raidLabel, "missing or empty routing table")
             end
 
@@ -903,10 +1198,15 @@ local function CollectRaidDataIssues(scopeFilter)
                                     add("error", raidLabel,
                                         sp .. (" segment %d triggeredBy.encounter must be a dungeonEncounterID"):format(si))
                                 end
+                            elseif seg.triggeredBy.scenario then
+                                if type(seg.triggeredBy.scenario) ~= "number" then
+                                    add("error", raidLabel,
+                                        sp .. (" segment %d triggeredBy.scenario must be a scenario criteriaID"):format(si))
+                                end
                             else
                                 -- triggeredBy with no known sub-key (e.g. just empty {})
                                 add("warn", raidLabel,
-                                    sp .. (" segment %d triggeredBy has no recognized sub-key (expected dialog or encounter)"):format(si))
+                                    sp .. (" segment %d triggeredBy has no recognized sub-key (expected dialog, encounter, or scenario)"):format(si))
                             end
                         end
                         -- after must reference valid seg indices in same step:
@@ -945,8 +1245,12 @@ local function CollectRaidDataIssues(scopeFilter)
         end
     end
 
-    validateTable(RetroRuns_Data,      "Data")
-    validateTable(RetroRuns_DataHorde, "DataHorde")
+    validateTable(RetroRuns_Data,        "Data")
+    validateTable(RetroRuns_DataHorde,   "DataHorde")
+    -- Dungeons carry routing in their own data table and are linted by the
+    -- same rules. Omitting this table made a scoped run over a dungeon
+    -- report zero issues because it had examined zero instances.
+    validateTable(RetroRuns_DungeonData, "DungeonData", true)
     return issues
 end
 
@@ -979,9 +1283,9 @@ function RR:LintRoute(scopeFilter)
 
     add("RetroRuns -- Route Lint Report")
     if scopeFilter and scopeFilter ~= "" then
-        add(("Scope: raids matching %q"):format(scopeFilter))
+        add(("Scope: instances matching %q"):format(scopeFilter))
     else
-        add("Scope: all loaded raids")
+        add("Scope: all loaded instances")
     end
     add(("Errors: %d   Warnings: %d"):format(#errors, #warns))
     add("")
@@ -1020,18 +1324,9 @@ function RR:InitializeDB()
     RetroRunsDB = RetroRunsDB or {}
     MergeDefaults(RetroRunsDB, self.defaults)
 
-    -- launchMode sets load-time visibility: hidden, minimized, or full.
-    -- Anything unrecognized falls through to minimized.
-    local launchMode = RetroRunsDB.launchMode
-    if launchMode == "hidden" then
-        RetroRunsDB.showPanel = false
-    elseif launchMode == "full" then
-        RetroRunsDB.showPanel = true
-        RetroRunsDB.minimized = false
-    else
-        RetroRunsDB.showPanel = true
-        RetroRunsDB.minimized = true
-    end
+    -- launchMode is applied from PLAYER_ENTERING_WORLD on initial login, not
+    -- here: this runs on /reload too, and a reload is not a login. Applying
+    -- it here discarded whatever the panel was showing before the reload.
 
     -- Only the long-lived log survives /reload, bucketed per character. An
     -- integer index means the old flat-list shape and is discarded.
@@ -1064,13 +1359,72 @@ function RR:InitializeDB()
     RetroRunsDB.tmogClassFilterOwner = nil
 end
 
-function RR:RestorePanelPosition()
-    if RetroRunsUI then
-        RetroRunsUI:ClearAllPoints()
-        RetroRunsUI:SetPoint(
-            "CENTER", UIParent, "CENTER",
-            self:GetSetting("panelX", 0),
-            self:GetSetting("panelY", 0))
+-- Load-time visibility: hidden, minimized, or full. Anything unrecognized
+-- falls through to minimized. Initial login only, so a /reload leaves the
+-- panel in whatever state the player had it.
+function RR:ApplyLaunchMode()
+    if not RetroRunsDB then return end
+    local launchMode = self:GetSetting("launchMode", "minimized")
+    if launchMode == "hidden" then
+        RetroRunsDB.showPanel = false
+    elseif launchMode == "full" then
+        RetroRunsDB.showPanel = true
+        RetroRunsDB.minimized = false
+    else
+        RetroRunsDB.showPanel = true
+        RetroRunsDB.minimized = true
+    end
+end
+
+-- Screen geometry -> TOPLEFT offsets in the frame's own scaled space.
+-- Offsets divide by the FRAME's effective scale, not UIParent's (Wowpedia
+-- "UI scaling"), the same rule the drag and resize maths follow.
+local function TopLeftOffsets(frame)
+    local fl, ft = frame:GetLeft(), frame:GetTop()
+    local pl, pt = UIParent:GetLeft(), UIParent:GetTop()
+    if not (fl and ft and pl and pt) then return nil end
+    local fscale = frame:GetEffectiveScale()
+    local pscale = UIParent:GetEffectiveScale()
+    return (fl * fscale - pl * pscale) / fscale,
+           (ft * fscale - pt * pscale) / fscale
+end
+RR.TopLeftOffsets = TopLeftOffsets
+
+function RR:RestorePanelPosition(source)
+    if not RetroRunsUI then return end
+    local trace = RR.UI and RR.UI._panelPosTrace
+    RetroRunsUI:ClearAllPoints()
+
+    if not self:GetSetting("panelAnchorSet") then
+        -- One-time migration. Apply the legacy CENTER offset, read where
+        -- that actually put the frame, and store it as a TOPLEFT anchor.
+        -- Converting through live geometry rather than arithmetic keeps
+        -- scale handling identical to every other path here.
+        local x, y = self:GetSetting("panelX", 0), self:GetSetting("panelY", 0)
+        RetroRunsUI:SetPoint("CENTER", UIParent, "CENTER", x, y)
+        local left, top = TopLeftOffsets(RetroRunsUI)
+        if left and top then
+            self:SetSetting("panelAnchorX", left)
+            self:SetSetting("panelAnchorY", top)
+            self:SetSetting("panelAnchorSet", true)
+            RetroRunsUI:ClearAllPoints()
+            RetroRunsUI:SetPoint("TOPLEFT", UIParent, "TOPLEFT", left, top)
+        end
+        if trace then
+            table.insert(trace, ("MIGRATE(%s) center x=%s y=%s -> left=%s top=%s")
+                :format(source or "?", x, y,
+                        left and math.floor(left + 0.5) or "?",
+                        top and math.floor(top + 0.5) or "?"))
+        end
+        return
+    end
+
+    local left = self:GetSetting("panelAnchorX", 0)
+    local top  = self:GetSetting("panelAnchorY", 0)
+    RetroRunsUI:SetPoint("TOPLEFT", UIParent, "TOPLEFT", left, top)
+    if trace then
+        table.insert(trace, ("RESTORE(%s) left=%s top=%s"):format(
+            source or "?", math.floor(left + 0.5), math.floor(top + 0.5)))
     end
 end
 
@@ -1094,7 +1448,14 @@ function RR:GetRaidContextKey(raid, info)
     raid = raid or self.currentRaid
     info = info or self:GetCurrentInstanceInfo()
     if not raid or not info then return nil end
+    -- journalInstanceID rides the key because instanceID alone cannot tell
+    -- Dire Maul's wings apart: zoning in resolves the wing from the player's
+    -- uiMap, which is still the OUTSIDE map for the first beat, so the first
+    -- pass lands on the fallback wing. With the wing in the key, the beat
+    -- where the real map arrives is itself a context change and re-runs the
+    -- wipe/restore/seed for the wing the player is actually in.
     return tostring(raid.instanceID or info.instanceID or "?")
+           .. ":" .. tostring(raid.journalInstanceID or 0)
            .. ":" .. tostring(info.difficultyID or 0)
 end
 
@@ -1242,16 +1603,26 @@ local function GetEJMapForJournalInstance(journalInstanceID)
     end
 
     -- MoP raids expose only the legacy sizes and the Classic 40-player
-    -- raids only id 9, so fall through until one yields rows. A raid whose
-    -- live id is missing here walks empty forever: the result is not cached
-    -- (see below), so every caller re-runs the whole select-and-restore
-    -- dance and drags an open Encounter Journal along with it.
-    local count = walkAtDifficulty(14)
-    if count == 0 then
-        for _, legacyDifficulty in ipairs({ 15, 5, 6, 3, 4, 9, 17, 7 }) do
-            count = walkAtDifficulty(legacyDifficulty)
-            if count > 0 then break end
-        end
+    -- raids only id 9, so fall through until one yields rows. Dungeons
+    -- answer on their own ids (1 Normal, 2 Heroic, 23 Mythic, 8 Keystone,
+    -- 24 Timewalking), so those trail the raid ids. An instance whose
+    -- live id is missing here walks empty forever: the result is not
+    -- cached (see below), so every caller re-runs the whole
+    -- select-and-restore dance and drags an open Encounter Journal along
+    -- with it.
+    -- EVERY difficulty is walked and the results accumulate. Stopping at the
+    -- first one that returned rows looked cheaper, but it trusted whichever
+    -- difficulty answered first to be the instance's real one, and the raid
+    -- ids are tried before the dungeon ids. Scarlet Monastery answers the
+    -- 10-player raid difficulty with a single junk encounter, so the walk
+    -- stopped there and memoized a one-encounter map for a three-boss
+    -- dungeon -- its pills read 0/1 all session. The maps are keyed by
+    -- journalEncounterID, so a union across difficulties is exactly the set
+    -- of encounters the instance has, whichever difficulty exposed each one.
+    local count = 0
+    for _, difficultyID in ipairs({ 14, 15, 5, 6, 3, 4, 9, 17, 7,
+                                    1, 2, 23, 8, 24 }) do
+        count = count + walkAtDifficulty(difficultyID)
     end
 
     -- Restore the prior selection and difficulty so an open EJ window
@@ -1342,7 +1713,30 @@ local DIFFICULTY_MODELS = {
         fold    = { [3] = 3, [4] = 4, [5] = 5, [6] = 6 },
         buckets = { 3, 4, 5, 6 },
     },
+    dungeon = {
+        -- Walk-in dungeon universe: 1 = Normal, 2 = Heroic, 23 = Mythic,
+        -- folded onto the raid bucket vocabulary so pills, the browser
+        -- and DIFF_LETTER reuse it unchanged. Queue and event ids
+        -- (8 Keystone, 24 Timewalking, 19 Event) never fold: those runs
+        -- are not walk-in clears. Per-dungeon availableDifficulties
+        -- trims the buckets to what the map offers.
+        fold    = { [1] = 14, [2] = 15, [23] = 16, [24] = 24 },
+        buckets = { 14, 15, 16, 24 },
+    },
+    singleTw = {
+        -- A single-difficulty raid whose Timewalking reprint drops are
+        -- tracked as their own bucket. The TW bucket appears only in the
+        -- browser: the pill builders skip buckets their label maps omit,
+        -- and no lockout machinery reads 33.
+        fold    = { [3] = 14, [4] = 14, [9] = 14, [14] = 14, [33] = 33 },
+        buckets = { 14, 33 },
+    },
 }
+-- The dungeon data files name their appearance shape (one appearance per
+-- item vs per-difficulty appearances); both shapes share the one walk-in
+-- fold.
+DIFFICULTY_MODELS.dungeonBinary = DIFFICULTY_MODELS.dungeon
+DIFFICULTY_MODELS.dungeonTiered = DIFFICULTY_MODELS.dungeon
 
 -- Resolve a raid's difficulty model, defaulting to independent.
 function RR:GetDifficultyModel(raid)
@@ -1438,8 +1832,28 @@ end
 
 -- Takes a display bucket, not a live ID. No `availableDifficulties` field
 -- means available everywhere.
+-- True when the boss exists for the player's faction. A boss with no
+-- faction field belongs to both. Same field and semantics as loot rows
+-- and routing segments.
+function RR:BossAvailableToFaction(boss)
+    if not boss then return false end
+    if not boss.faction then return true end
+    return boss.faction == (UnitFactionGroup and UnitFactionGroup("player"))
+end
+
+-- True when the server never reports this boss's death, so no source can
+-- ever mark it killed: no encounter event, no scenario criterion, no
+-- lockout. Scarlet Monastery of Old's High Inquisitor Fairbanks is the
+-- first. Such a boss
+-- still LISTS -- its loot is real and collectible -- but it must stay out
+-- of every completion count, or a full clear can never read complete.
+function RR:IsBossKillUntracked(boss)
+    return type(boss) == "table" and boss.killUntracked == true
+end
+
 function RR:BossAvailableInBucket(boss, bucket)
     if not boss then return false end
+    if not self:BossAvailableToFaction(boss) then return false end
     local allowed = boss.availableDifficulties
     if not allowed then return true end  -- unrestricted: exists everywhere
     for _, b in ipairs(allowed) do
@@ -1497,16 +1911,50 @@ function RR:GetPerDifficultyKillCountsForRaid(raid)
     for _, bucket in ipairs(self:GetDisplayBuckets(raid)) do
         local complete = 0
         local total    = 0
+        -- The count is over LOCKOUT ENCOUNTERS, not boss rows. Boss rows
+        -- and encounters are not one-to-one in either direction:
+        --   * several rows can share ONE encounter -- Return to Karazhan's
+        --     three Opera Hall variants, Zul'Gurub's four Cache of Madness
+        --     bosses, the Nexus commanders, Trial of the Champion's three.
+        --     Counting rows there credited a single kill two to four times.
+        --   * a row can map to NO encounter at all -- the Violet Hold's six
+        --     rotating pool bosses and Atal'Hakkar's Wardens of the Dream
+        --     carry DungeonEncounterID 0, so they can never report complete
+        --     and left a denominator no clear could reach.
+        -- Both shapes disappear once the encounter id is what gets counted.
+        local countedEncounters = {}
         for _, b in ipairs(raid.bosses or {}) do
             -- Availability alone, never whether the journal exposes an ID.
-            if self:BossAvailableInBucket(b, bucket) then
-                total = total + 1
+            -- An untracked boss can never be marked killed, so counting it
+            -- would put the clear permanently out of reach. It still lists.
+            if self:BossAvailableInBucket(b, bucket)
+                and not self:IsBossKillUntracked(b) then
                 -- Falls back to the data file's ID when the journal has none.
                 local dungeonEncID = journalToDungeonEnc[b.journalEncounterID]
                     or b.dungeonEncounterID
-                if dungeonEncID then
+                    or (b.dungeonEncounterIDs and b.dungeonEncounterIDs[1])
+                if dungeonEncID and not countedEncounters[dungeonEncID] then
+                    countedEncounters[dungeonEncID] = true
+                    total = total + 1
                     for _, liveId in ipairs(liveIdsForBucket[bucket] or {}) do
-                        if C_RaidLocks.IsEncounterComplete(instanceID, dungeonEncID, liveId) then
+                        -- A plural boss (several real encounters folded into
+                        -- one journal entry) is complete when EVERY member is.
+                        -- Named apart from the bucket's `complete` counter on
+                        -- purpose: an inner `local complete` shadowed it, and
+                        -- the increment below then ran against this boolean.
+                        local encounterDone
+                        if b.dungeonEncounterIDs then
+                            encounterDone = true
+                            for _, memberID in ipairs(b.dungeonEncounterIDs) do
+                                if not C_RaidLocks.IsEncounterComplete(instanceID, memberID, liveId) then
+                                    encounterDone = false
+                                    break
+                                end
+                            end
+                        else
+                            encounterDone = C_RaidLocks.IsEncounterComplete(instanceID, dungeonEncID, liveId)
+                        end
+                        if encounterDone then
                             complete = complete + 1
                             break
                         end
@@ -1534,13 +1982,23 @@ function RR:GetPerDifficultyKillCountsForRaid(raid)
             for _, floorBucket in ipairs(floorBuckets) do
                 if result[floorBucket] then
                     local localCount = 0
+                    local floorEncounters = {}
                     for _, b in ipairs(raid.bosses or {}) do
                         -- Only count toward the bucket if the boss exists
-                        -- there -- mirrors the per-bucket total above so the
-                        -- floor can't push complete past total.
+                        -- there, and count each lockout ENCOUNTER once --
+                        -- both mirror the per-bucket total above so the
+                        -- floor can't push complete past total. Rows
+                        -- sharing an encounter would otherwise each add
+                        -- one against a total that counts them as one.
+                        local dungeonEncID = journalToDungeonEnc[b.journalEncounterID]
+                            or b.dungeonEncounterID
+                            or (b.dungeonEncounterIDs and b.dungeonEncounterIDs[1])
                         if self.state.bossesKilled[b.index]
                             and not self.state.bossesKilledViaPairOnly[b.index]
-                            and self:BossAvailableInBucket(b, floorBucket) then
+                            and self:BossAvailableInBucket(b, floorBucket)
+                            and dungeonEncID
+                            and not floorEncounters[dungeonEncID] then
+                            floorEncounters[dungeonEncID] = true
                             localCount = localCount + 1
                         end
                     end
@@ -2070,6 +2528,7 @@ function RR:LockProbe()
                 local dungeonEncID =
                     (journalToDungeonEnc and journalToDungeonEnc[b.journalEncounterID])
                     or b.dungeonEncounterID
+                    or (b.dungeonEncounterIDs and b.dungeonEncounterIDs[1])
                 if dungeonEncID then
                     local cells = {}
                     for _, probeId in ipairs(matrixIds) do
@@ -2446,8 +2905,119 @@ end
 
 -- The data table for the raid the player is inside. Horde reads
 -- RetroRuns_DataHorde first, falling through to the shared table.
+-- Dungeon lookup by INSTANCE MAP id, which is what GetInstanceInfo
+-- reports. The data itself is keyed by journalInstanceID because five
+-- dungeons share a map with a sibling -- Dire Maul's three wings all
+-- report map 429, Stratholme's two entrances both report 329 -- so the
+-- map id genuinely cannot pick between them. The lowest journalInstanceID
+-- wins, which at least makes the answer stable run to run; the other 118
+-- resolve one to one. Built once, since the data never changes after load.
+--
+-- A wing that is its OWN instance rather than part of one walkable map
+-- (Scarlet Monastery of Old's four) declares `uiMaps`, and that index is
+-- consulted first: the player's current uiMap names the wing outright.
+-- Dire Maul and Stratholme carry no `uiMaps` and keep the lowest-id
+-- behavior, which is right for them -- their wings share one instance a
+-- player walks between.
+local dungeonByInstanceMap, dungeonByUiMap
+local function BuildDungeonIndexes()
+    dungeonByInstanceMap, dungeonByUiMap = {}, {}
+    for _, dungeon in pairs(RetroRuns_DungeonData or {}) do
+        local mapID = dungeon.instanceID
+        if mapID and mapID > 0 then
+            local claimed = dungeonByInstanceMap[mapID]
+            if not claimed
+                or (dungeon.journalInstanceID or 0) < (claimed.journalInstanceID or 0)
+            then
+                dungeonByInstanceMap[mapID] = dungeon
+            end
+            for _, uiMapID in ipairs(dungeon.uiMaps or {}) do
+                dungeonByUiMap[uiMapID] = dungeon
+            end
+        end
+    end
+end
+
+-- The wing chosen when the player entered, kept until they leave. Wings that
+-- SHARE one walkable instance (Stratholme's two doors, Dire Maul's three)
+-- cannot be re-resolved from the live uiMap on every location change: a Main
+-- Gate run that steps into the Gauntlet (318) reads as Service Entrance and
+-- would swap the boss list, the route and the run record's key mid-run. The
+-- game itself decides at the door -- entering the front gate makes the side
+-- door port you back to it until an explicit reset -- so this mirrors that:
+-- resolved once on entry, cleared on leaving.
+local enteredWing = nil
+-- True while the held wing was picked inside the login settle window. The
+-- client's first map reads after a login can name the wrong floor outright
+-- for their first second, so a hold taken then stays open to a
+-- claimed re-pick until the window closes.
+local enteredWingProvisional = false
+
+local function InLoginSettleWindow()
+    local untilTime = RR.state and RR.state.loginSettleUntil
+    return untilTime ~= nil and GetTime() < untilTime
+end
+
+local function DungeonForInstanceMap(instanceMapID, uiMapID)
+    if not instanceMapID then return nil end
+    if not dungeonByInstanceMap then BuildDungeonIndexes() end
+    -- Already inside: keep the wing entry picked, however the player has
+    -- wandered since. A PROVISIONAL hold re-picks from any claimed uiMap
+    -- until the login window closes; a settled hold is kept, which is the
+    -- side-door rule.
+    if enteredWing and enteredWing.instanceID == instanceMapID then
+        if enteredWingProvisional then
+            local byUi = uiMapID and dungeonByUiMap[uiMapID]
+            if byUi and byUi.instanceID == instanceMapID then
+                enteredWing = byUi
+            end
+            enteredWingProvisional = InLoginSettleWindow()
+        end
+        return enteredWing
+    end
+    -- The wing the player is actually standing in, when one claims this
+    -- uiMap and belongs to this instance. Guarded on instanceID so a
+    -- stale map reading cannot hand back a dungeon from somewhere else.
+    local byUi = uiMapID and dungeonByUiMap[uiMapID]
+    if byUi and byUi.instanceID == instanceMapID then
+        enteredWing = byUi
+        enteredWingProvisional = InLoginSettleWindow()
+        return byUi
+    end
+    -- No wing claims this map: the lowest journalInstanceID sibling, which
+    -- at least makes the answer stable run to run.
+    --
+    -- NOT REMEMBERED, and that is the whole point. GetInstanceInfo reports
+    -- the instance a beat BEFORE the player's uiMap catches up -- the zone
+    -- log shows the first resolve landing while the zone still reads
+    -- "Eastern Plaguelands" with a nil map -- so this branch runs on entry
+    -- with nothing to identify the wing by. Caching that guess pinned the
+    -- Service Entrance to the Main Gate until the next reload. Left
+    -- uncached, the next call once the map resolves picks the right wing
+    -- and caches THAT. Single-wing dungeons are unaffected: their tiebreak
+    -- has one candidate and is right every time.
+    return dungeonByInstanceMap[instanceMapID]
+end
+
+-- Cleared on leaving, so the next entry resolves fresh. Exposed on RR
+-- because HandleLocationChange lives outside this file's local scope.
+function RR:ClearEnteredWing()
+    enteredWing = nil
+    enteredWingProvisional = false
+end
+
 function RR:GetSupportedRaid()
     local info = self:GetCurrentInstanceInfo()
+    -- Dungeons are supported instances too: entering one loads its boss
+    -- progress, arms the toaster and points the transmog button at it,
+    -- whether or not it has a route yet.
+    if info.instanceType == "party" then
+        -- The player's own map, so a wing that is its own instance
+        -- resolves to the wing rather than to its lowest-id sibling.
+        local uiMapID = C_Map and C_Map.GetBestMapForUnit
+            and C_Map.GetBestMapForUnit("player")
+        return DungeonForInstanceMap(info.instanceID, uiMapID)
+    end
     if info.instanceType ~= "raid" then return nil end
 
     local faction = UnitFactionGroup("player")
@@ -2609,7 +3179,12 @@ function RR:GetCurrentLockoutId()
     for i = 1, numSaved do
         local _, lockoutId, _, difficultyId, _, _, _, isRaid,
               _, _, _, _, _, instanceID = GetSavedInstanceInfo(i)
-        if isRaid and instanceID == self.currentRaid.instanceID then
+        -- Row type has to match the instance: GetSavedInstanceInfo reports
+        -- isRaid=false for a saved dungeon, so a raid-only test made the
+        -- persisted store unreachable for every Heroic and Mythic dungeon.
+        local wantRaidRow = (self.currentRaid.kind ~= "dungeon")
+        if ((isRaid and true or false) == wantRaidRow)
+            and instanceID == self.currentRaid.instanceID then
             if difficultyId == self.state.currentDifficultyID then
                 return lockoutId
             elseif self:SavedRowMatchesActiveLockout(difficultyId) then
@@ -2650,6 +3225,13 @@ end
 function RR:RestoreRealRaidState()
     self:ClearBossState()
     self:SyncFromSavedRaidInfo(true)   -- request fresh server data
+    -- Leaving test mode wipes the simulated kills, and for an instance the
+    -- server does not save, the sync above has nothing to put back -- the
+    -- real run's kills live only in our own record. sameSession is true:
+    -- the client never left, so it is provably the same instance. Test
+    -- kills never entered the record (PersistRunProgress stands down in
+    -- test mode), so what comes back is what was really killed.
+    self:RestoreRunProgress(true)
     self:RestorePersistedProgress()
     self:ComputeNextStep()
     self:RefreshAll()
@@ -2680,11 +3262,11 @@ function RR:LoadCurrentRaid(variant)
         self:PersistRouteVariant(self.state.activeRouteVariant)
     end
 
-    -- Force fully open regardless of launchMode.
+    -- Show the panel, but honor the user's minimized choice: the
+    -- minimized bar now carries the active step and its note, so forcing
+    -- the full panel open on every raid load overrides a deliberate
+    -- setting to show something the bar already says.
     self:SetSetting("showPanel", true)
-    if RR.UI and RR.UI.SetMinimized then
-        RR.UI.SetMinimized(false)
-    end
     self:RefreshAll()
 end
 
@@ -2697,7 +3279,12 @@ end
 function RR:HandleLocationChange()
     local info = self:GetCurrentInstanceInfo()
 
-    if info.instanceType ~= "raid" then
+    -- Dungeons ("party") are supported instances too, so they fall
+    -- through to the same load path raids take. Anything else -- the open
+    -- world, battlegrounds, scenarios -- unloads.
+    if info.instanceType ~= "raid" and info.instanceType ~= "party" then
+        self:ApplyPendingInstanceGeneration()
+        self:ClearEnteredWing()
         self.currentRaid                 = nil
         self.state.lastSeenRaidKey       = nil
         self.state.currentDifficultyID   = nil
@@ -2722,6 +3309,11 @@ function RR:HandleLocationChange()
 
     -- Leaving a mapID completes the earliest incomplete segment on it -- the
     -- only completion mechanism available inside a raid.
+    -- Every pass through here while inside counts as contact with the
+    -- spawned instance, supported or not -- the hourly cap does not care
+    -- whether RetroRuns tracks the place.
+    self:TrackInstanceEntry(info)
+
     local currentMapID = C_Map and C_Map.GetBestMapForUnit and
                          C_Map.GetBestMapForUnit("player")
     local previousMapID = self.state.lastPlayerMapID
@@ -2756,6 +3348,15 @@ function RR:HandleLocationChange()
         self.state.lastPlayerMapID = currentMapID
     end
 
+    -- The record's last-seen spot updates on every location change, so
+    -- the login comparison never waits on a logout event. Held during the
+    -- settle window: the login restore must read the PREVIOUS session's
+    -- stamp before anything overwrites it.
+    if self.currentRaid and not InLoginSettleWindow()
+        and self.StampLastSeen then
+        self:StampLastSeen()
+    end
+
     -- An optional step yields on position, so movement re-selects. Gated on
     -- the ROUTE holding one, not the active step, so the cede is reversible.
     if self.currentRaid and self:ActiveRoutingHasOptionalStep() then
@@ -2779,12 +3380,12 @@ function RR:HandleLocationChange()
             for _, boss in ipairs(supported.bosses) do
                 if boss.loot then
                     for _, item in ipairs(boss.loot) do
-                        if item.id then GetItemInfo(item.id) end
+                        if item.id then C_Item.GetItemInfo(item.id) end
                     end
                 end
                 if boss.specialLoot then
                     for _, item in ipairs(boss.specialLoot) do
-                        if item.id then GetItemInfo(item.id) end
+                        if item.id then C_Item.GetItemInfo(item.id) end
                     end
                 end
             end
@@ -2798,6 +3399,7 @@ function RR:HandleLocationChange()
             if self:HasSavedRouteStore()
                 and not self:GetCurrentLockoutId()
                 and not self.state.instanceInfoSeen then
+                self:ZoneLog("HLC: load decision deferred until instance info arrives")
                 return
             end
 
@@ -2805,10 +3407,42 @@ function RR:HandleLocationChange()
             -- context has to wipe it.
             wipe(self.state.bossesKilled)
             wipe(self.state.bossesKilledViaPairOnly)
+            wipe(self.state.bossPartialKills)
             wipe(self.state.bossesSkipped)
+            -- The step pointer and the per-step segment progress are keyed
+            -- the same way and need the same wipe. Dire Maul's three wings
+            -- share an instanceID, so walking between them can otherwise
+            -- leave a step belonging to the wing next door: its segments sit
+            -- on a map the player is not standing on, the line picker returns
+            -- nothing, and the panel reads out another wing's travel note.
+            self.state.activeStep = nil
+            self.state.progress = {}
+            self.state.triggersFired = self.state.triggersFired or {}
+            wipe(self.state.triggersFired)
             self.state.lastSeenRaidKey = key
 
-            if self:HasPersistedProgressForCurrentLockout()
+            -- An instance with no saved lockout has nothing on the server
+            -- to sync from, so its kills come back from our own record.
+            -- Runs right after the wipe above, which is what it undoes.
+            --
+            -- `isReloadingUi` is only true when the client never left,
+            -- making the record provably this same instance.
+            --
+            -- Being placed inside the instance at login is not a second
+            -- proof: a Normal dungeon's soft reset replaces the contents
+            -- without moving the player.
+            self:RestoreRunProgress(self.state.isReloadingUi)
+            -- Criteria can arrive after PLAYER_ENTERING_WORLD, so the read
+            -- above is retried until the API answers.
+            self:ScheduleScenarioKillRetry()
+
+            -- Dungeons never take the resume path: it announces which
+            -- route variant is being restored, and they have no variants
+            -- (and often no route). A Heroic or Mythic dungeon does carry
+            -- a real lockout, so without this guard a re-entry after a
+            -- kill would resume a route that does not exist.
+            if supported.kind ~= "dungeon"
+               and self:HasPersistedProgressForCurrentLockout()
                and self:HasAnyKillThisLockout() then
                 -- Committed (a route loaded AND a boss dead): restore the
                 -- persisted route silently instead of re-prompting.
@@ -2823,8 +3457,12 @@ function RR:HandleLocationChange()
                                 or self:GetLocalizedRaidName(supported),
                             killed, total))
                 self:PrintAfterBanner((RR.L["Resuming %s route."]):format(routeWord))
-            elseif self:IsInLFR() then
+            elseif self:IsInLFR() or supported.kind == "dungeon" then
                 -- Neither route variant applies in LFR, so load directly.
+                -- Dungeons load directly too: the full/skip choice the
+                -- dialog exists to offer is a raid concept, and asking
+                -- about navigation would promise a route an unrouted
+                -- dungeon does not have.
                 self.state.loadedRaidKey = key
                 self:LoadCurrentRaid()
             else
@@ -2847,8 +3485,20 @@ function RR:HandleLocationChange()
         -- they enter starts with a clean baseline.
         wipe(self.state.bossesKilled)
         wipe(self.state.bossesKilledViaPairOnly)
+        wipe(self.state.bossPartialKills)
         wipe(self.state.bossesSkipped)
+        self:ClearEnteredWing()
         self.currentRaid                 = nil
+        -- Boss indices are not instance-scoped, so a remembered encounter
+        -- would aim the transmog button at the wrong boss of the next
+        -- instance entered.
+        self.state.lastEncounterBossIndex = nil
+        -- The run record deliberately SURVIVES stepping outside. A
+        -- non-saving instance stays alive for a grace period after the
+        -- last player leaves, so walking out and back in finds the same
+        -- bosses dead -- clearing here would have shown them alive again.
+        -- What ends a run is an explicit reset (hooked on ResetInstances)
+        -- or the record ageing out.
         self.state.loadedRaidKey         = nil
         self.state.instanceInfoSeen      = false
         self.state.currentDifficultyID   = nil
@@ -2878,8 +3528,10 @@ function RR:RefreshAll()
     if self.currentRaid then
         local changed = self:SyncFromSavedRaidInfo(true)   -- request fresh server data
         self:ZoneLog(("RefreshAll: changed=%s"):format(tostring(changed)))
-        -- No kill-state change means nothing new to render.
-        if changed == false then return end
+        -- The no-change early-out only holds where a lockout backs the sync.
+        -- A lockout-less instance has no saved rows to diff, so its kill
+        -- state changes without the sync ever reporting it.
+        if changed == false and self:GetCurrentLockoutId() then return end
     else
         self.state.activeStep = nil
     end
@@ -2952,7 +3604,7 @@ end
 
 function RR:SimulateKillNext()
     if not self.currentRaid then
-        self:Print(RR.L["No supported raid detected."])
+        self:Print(RR.L["No supported instance detected."])
         return
     end
     if not self.state.testMode then
@@ -2977,7 +3629,7 @@ end
 
 function RR:ManualKill(input)
     if not self.currentRaid then
-        self:Print(RR.L["No raid loaded."])
+        self:Print(RR.L["No instance loaded."])
         return
     end
     local boss = self:ResolveBoss(input)
@@ -2994,7 +3646,7 @@ end
 
 function RR:ManualUnkill(input)
     if not self.currentRaid then
-        self:Print(RR.L["No raid loaded."])
+        self:Print(RR.L["No instance loaded."])
         return
     end
     local boss = self:ResolveBoss(input)
@@ -3056,12 +3708,12 @@ function RR:PrintStatus()
             and ("  %q"):format(self.currentRaid.maps[worldMapID]) or ""))
 
     if not self.currentRaid then
-        add("Raid: (none loaded)")
-        add("Open a supported raid to load state.")
+        add("Instance: (none loaded)")
+        add("Open a supported instance to load state.")
         RR:ShowCopyWindow(
             "|cffF259C7RETRO|r|cff4DCCFFRUNS|r  |cffaaaaaastatus|r",
             table.concat(lines, "\n"))
-        self:Print(RR.L["Status window opened.  (no raid loaded)"])
+        self:Print(RR.L["Status window opened.  (no instance loaded)"])
         return
     end
 
@@ -3078,12 +3730,16 @@ function RR:PrintStatus()
     -- player actually zones in. Coords stored in normalized 0-1 form
     -- in raid.entrance; displayed here as percentages to match the
     -- live coords line above for direct comparison.
-    if raid.entrance then
-        local entrance = raid.entrance
+    local entrance = self:GetRaidEntrance(raid)
+    if entrance then
         add(("Entrance (data): mapID=%s  coords=%.1f, %.1f  subZone=%q"):format(
             tostring(entrance.mapID or "?"),
             (entrance.x or 0) * 100, (entrance.y or 0) * 100,
             entrance.subZone or ""))
+        if raid.entrance and (raid.entrance.alliance or raid.entrance.horde) then
+            add(("Entrance (data): faction pair; showing %s"):format(
+                tostring(UnitFactionGroup("player"))))
+        end
     end
 
     -- Instance IDs. Helpful when verifying that a new raid's skeleton
@@ -3143,7 +3799,7 @@ function RR:PrintStatus()
             add(("Step: %d"):format(step.step or 0))
         end
     else
-        add("Step: (none -- raid complete?)")
+        add("Step: (none -- instance complete?)")
     end
 
     -- Kill summary.
@@ -3210,20 +3866,17 @@ end
 local function DialogEventHandler(_, event, ...)
     if not dialogDebug.active then return end
     if not dialogDebug.buffer then return end  -- defensive; shouldn't happen
-    -- Payloads carry arbitrary text from any NPC in earshot. A failure loses
-    -- this capture and leaves the tool armed.
-    local args = { event, ... }
-    local ok, err = pcall(function()
-        table.insert(dialogDebug.buffer, FormatDialogCapture(unpack(args)))
-        -- arg1 = text, arg2 = sender name across all three CHAT_MSG_MONSTER_*
-        -- and CHAT_MSG_RAID_BOSS_EMOTE events (consistent API surface).
-        local text   = args[2]
-        local sender = args[3]
-        PrintDialogConfirmation(event, text, sender)
-    end)
-    if not ok then
-        RR:ZoneLog("[DialogDebug] handler crash: " .. tostring(err))
+    -- arg1 = text, arg2 = sender name across all three CHAT_MSG_MONSTER_*
+    -- and CHAT_MSG_RAID_BOSS_EMOTE events (consistent API surface).
+    local text, sender = ...
+    -- Secret-tainted payloads error on any string op, so they are recorded
+    -- as such and skipped -- the same guard the live dialog handler uses.
+    if issecretvalue and (issecretvalue(text) or issecretvalue(sender)) then
+        table.insert(dialogDebug.buffer, "(secret payload)")
+        return
     end
+    table.insert(dialogDebug.buffer, FormatDialogCapture(event, ...))
+    PrintDialogConfirmation(event, text, sender)
 end
 
 function RR:DialogDebugStart()
@@ -3310,8 +3963,8 @@ end
 local function LootEventHandler(_, event, ...)
     if not lootProbe.active then return end
     lootProbe.buffer[#lootProbe.buffer + 1] = FormatLootCapture(event, ...)
-    -- Lightweight confirmation so Photek sees captures land live without
-    -- having to stop the probe; full payload goes to the dump window.
+    -- One line per capture so they can be seen landing live; the full
+    -- payload goes to the dump window.
     RR:Print(("|cff00ff88[LootProbe]|r %s (%d arg(s))"):format(event, select("#", ...)))
 end
 
@@ -3379,12 +4032,12 @@ function RR:VerifyOneRaid(raid, opts, onDone)
     for _, boss in ipairs(raid.bosses) do
         if boss.loot then
             for _, it in ipairs(boss.loot) do
-                if it.id then GetItemInfo(it.id) end
+                if it.id then C_Item.GetItemInfo(it.id) end
             end
         end
         if boss.specialLoot then
             for _, it in ipairs(boss.specialLoot) do
-                if it.id then GetItemInfo(it.id) end
+                if it.id then C_Item.GetItemInfo(it.id) end
             end
         end
     end
@@ -3752,9 +4405,9 @@ function RR:VerifyOneRaid(raid, opts, onDone)
                 for _, sp in ipairs(sortedSp) do
                     local findings = {}
                     -- [S1] itemID resolves?
-                    local itemName = sp.id and GetItemInfo(sp.id)
+                    local itemName = sp.id and C_Item.GetItemInfo(sp.id)
                     if not itemName then
-                        table.insert(findings, ("[WRN] GetItemInfo(%d) returned nil (cache cold or invalid itemID?)"):format(sp.id or 0))
+                        table.insert(findings, ("[WRN] C_Item.GetItemInfo(%d) returned nil (cache cold or invalid itemID?)"):format(sp.id or 0))
                         T.special_item_unknown = T.special_item_unknown + 1
                     end
                     -- [S2] kind-vs-API sanity.
@@ -4020,7 +4673,7 @@ function RR:VerifyOneRaid(raid, opts, onDone)
                         local ejSet      = ejSrcByBucket[d] or {}
                         for ejSrc, ejItemID in pairs(ejSet) do
                             if not shippedSet[ejSrc] then
-                                local nm = GetItemInfo(ejItemID) or "?"
+                                local nm = C_Item.GetItemInfo(ejItemID) or "?"
                                 table.insert(bossFindings, ("[ERR] E6 %s %s: EJ exposes src=%d (item %d), not in our [%s] bucket"):format(
                                     DIFF_NAME[d] or tostring(d), nm, ejSrc, ejItemID, DIFF_NAME[d] or tostring(d)))
                                 T.coverage_gap = T.coverage_gap + 1
@@ -4078,7 +4731,7 @@ function RR:VerifyOneRaid(raid, opts, onDone)
                     -- look in any bucket, it's covered.
                     for visualID, meta in pairs(ejAppearance) do
                         if not shippedAppearance[visualID] then
-                            local nm = GetItemInfo(meta.itemID) or "?"
+                            local nm = C_Item.GetItemInfo(meta.itemID) or "?"
                             table.insert(bossFindings, ("[ERR] E7 visual=%d (item %d %s): EJ exposes this appearance, not in our data"):format(
                                 visualID, meta.itemID, nm))
                             T.missing_item = T.missing_item + 1
@@ -4232,14 +4885,34 @@ SlashCmdList["RETRORUNS"] = function(input)
         RR:ShowRecorderSessionLog(showAll)
 
     elseif cmd == "lintroute" then
-        -- On-demand structural lint of all loaded raid data. Reports
+        -- On-demand structural lint of all loaded raid and dungeon data. Reports
         -- errors (malformed required fields, broken cross-refs) and
         -- warnings (unverified maps[] entries, segment subZones not
         -- present in maps[], consecutive-duplicate mapIDs). Optional
-        -- second arg filters to raids whose name contains that
+        -- second arg filters to instances whose name contains that
         -- substring, e.g. `/rr lintroute Aberrus`.
         local scope = args[2]
         RR:LintRoute(scope)
+
+    elseif cmd == "panelpos" then
+        -- Panel-position provenance. Every persist and restore is tagged
+        -- with the code path that asked, so a user whose panel drifts back
+        -- to a corner between logins can show which write clobbered it.
+        local lines = { "Panel position trace (oldest first)",
+                        ("anchor: left=%s top=%s  set=%s  minimized=%s"):format(
+                            tostring(RR:GetSetting("panelAnchorX")),
+                            tostring(RR:GetSetting("panelAnchorY")),
+                            tostring(RR:GetSetting("panelAnchorSet")),
+                            tostring(RR:GetSetting("minimized"))),
+                        ("legacy center: x=%s y=%s"):format(
+                            tostring(RR:GetSetting("panelX")),
+                            tostring(RR:GetSetting("panelY"))), "" }
+        for _, entry in ipairs((RR.UI and RR.UI._panelPosTrace) or {}) do
+            lines[#lines + 1] = entry
+        end
+        if #lines == 3 then lines[#lines + 1] = "(no writes recorded yet)" end
+        RR:ShowCopyWindow("RetroRuns -- panel position",
+            table.concat(lines, string.char(10)))
 
     elseif cmd == "diag" then
         -- Consolidated diagnostic dump: RetroEngine state + zone log +
@@ -4312,7 +4985,7 @@ SlashCmdList["RETRORUNS"] = function(input)
         for k, v in pairs(RR.defaults) do RetroRunsDB[k] = v end
         if preservedShowPanel ~= nil then RR:SetSetting("showPanel", preservedShowPanel) end
         if preservedDebug     ~= nil then RR:SetSetting("debug",     preservedDebug)     end
-        RR:RestorePanelPosition()
+        RR:RestorePanelPosition("reset-defaults")
         if RetroRunsSettingsFrame and RetroRunsSettingsFrame.RestorePosition then
             RetroRunsSettingsFrame:RestorePosition()
         end
@@ -4344,7 +5017,7 @@ SlashCmdList["RETRORUNS"] = function(input)
 
     elseif cmd == "real" then
         RR:DisableTestMode()
-        RR:Print(RR.L["Returned to live raid state."])
+        RR:Print(RR.L["Returned to live instance state."])
 
     elseif cmd == "resetsegments" then
         -- Clear persisted routing-progress state for the CURRENT raid.
@@ -4360,7 +5033,7 @@ SlashCmdList["RETRORUNS"] = function(input)
         -- before it. Wiping it here removes the manual mental
         -- timestamp-filtering step.
         if not RR.currentRaid then
-            RR:Print(RR.L["No raid loaded. Zone into a supported raid first."])
+            RR:Print(RR.L["No instance loaded. Zone into a supported instance first."])
         else
             RR.state.progress      = {}
             RR.state.triggersFired = {}
@@ -4409,9 +5082,6 @@ SlashCmdList["RETRORUNS"] = function(input)
         -- then prints the OR'd unlock verdict. Used to confirm the
         -- statistic IDs and account-wide behavior before codifying.
         RR:GarroshSkipProbe()
-
-    elseif cmd == "raidcapture" then
-        RR:RaidCapture()
 
     elseif cmd == "localeharvest" then
         if args[2] == "misses" then
@@ -4725,7 +5395,7 @@ SlashCmdList["RETRORUNS"] = function(input)
             -- GetItemInfo snapshot (name + equipLoc). The equipLoc is
             -- key -- an item with non-empty equipLoc won't hit the
             -- specialLoot detection branch in CollectEncounterLoot.
-            local name, link, _, _, _, _, _, _, equipLoc = GetItemInfo(id)
+            local name, link, _, _, _, _, _, _, equipLoc = C_Item.GetItemInfo(id)
             add(("GetItemInfo: name=%s equipLoc=%q link=%s"):format(
                 tostring(name), tostring(equipLoc or ""), tostring(link)))
 
@@ -4847,8 +5517,8 @@ SlashCmdList["RETRORUNS"] = function(input)
             local function add(line) table.insert(lines, line) end
             add(("dottest itemID=%d"):format(id))
             if not itemRow then
-                add("  (item not found in currently-loaded raid data)")
-                add("  Zone into a supported raid first, then rerun.")
+                add("  (item not found in currently-loaded instance data)")
+                add("  Zone into a supported instance first, then rerun.")
                 RR:ShowCopyWindow(
                     ("|cffF259C7RETRO|r|cff4DCCFFRUNS|r  |cffaaaaaaDebug: dottest %d|r"):format(id),
                     table.concat(lines, "\n"))
@@ -4975,8 +5645,8 @@ SlashCmdList["RETRORUNS"] = function(input)
                 end
             end
             if #matches == 0 then
-                RR:Print(("No supported raid matches %q. Try part of the name."):format(nameQuery))
-                RR:Print(RR.L["Supported raids:"])
+                RR:Print(("No supported instance matches %q. Try part of the name."):format(nameQuery))
+                RR:Print(RR.L["Supported instances:"])
                 if RetroRuns_Data then
                     for _, r in pairs(RetroRuns_Data) do
                         if r and r.name then
@@ -4986,7 +5656,7 @@ SlashCmdList["RETRORUNS"] = function(input)
                 end
                 raid = nil
             elseif #matches > 1 then
-                RR:Print(("Ambiguous match for %q, matched %d raids:"):format(
+                RR:Print(("Ambiguous match for %q, matched %d instances:"):format(
                     nameQuery, #matches))
                 for _, r in ipairs(matches) do
                     RR:Print(("  %s"):format(r.name))
@@ -5002,8 +5672,8 @@ SlashCmdList["RETRORUNS"] = function(input)
 
         if not raid or not raid.bosses then
             if not nameQuery then
-                RR:Print(RR.L["No raid loaded. Zone into a supported raid, or use:"])
-                RR:Print(RR.L["  /rr tmogaudit <raid name substring>"])
+                RR:Print(RR.L["No instance loaded. Zone into a supported instance, or use:"])
+                RR:Print(RR.L["  /rr tmogaudit <instance name substring>"])
             end
         elseif not RR.CollectionStateForSource then
             RR:Print(RR.L["UI state helpers not available (UI.lua not loaded?)"])
@@ -5028,12 +5698,12 @@ SlashCmdList["RETRORUNS"] = function(input)
             for _, boss in ipairs(raid.bosses) do
                 if boss.loot then
                     for _, it in ipairs(boss.loot) do
-                        if it.id then GetItemInfo(it.id) end
+                        if it.id then C_Item.GetItemInfo(it.id) end
                     end
                 end
                 if boss.specialLoot then
                     for _, it in ipairs(boss.specialLoot) do
-                        if it.id then GetItemInfo(it.id) end
+                        if it.id then C_Item.GetItemInfo(it.id) end
                     end
                 end
             end
@@ -5284,9 +5954,9 @@ SlashCmdList["RETRORUNS"] = function(input)
                 end
             end
             if #matches == 0 then
-                RR:Print(("No supported raid matches %q."):format(nameQuery))
+                RR:Print(("No supported instance matches %q."):format(nameQuery))
                 if RetroRuns_Data then
-                    RR:Print(RR.L["Supported raids:"])
+                    RR:Print(RR.L["Supported instances:"])
                     for _, r in pairs(RetroRuns_Data) do
                         if r and r.name then RR:Print(("  %s"):format(r.name)) end
                     end
@@ -5305,8 +5975,8 @@ SlashCmdList["RETRORUNS"] = function(input)
 
         if not raid or not raid.bosses then
             if not nameQuery then
-                RR:Print(RR.L["No raid loaded. Zone into a supported raid, or use:"])
-                RR:Print(RR.L["  /rr tmogverify <raid name substring>"])
+                RR:Print(RR.L["No instance loaded. Zone into a supported instance, or use:"])
+                RR:Print(RR.L["  /rr tmogverify <instance name substring>"])
             end
         else
             -- The verification body has been extracted into RR:VerifyOneRaid
@@ -5355,7 +6025,7 @@ SlashCmdList["RETRORUNS"] = function(input)
             table.sort(raids, function(a, b) return a.name < b.name end)
 
             if #raids == 0 then
-                RR:Print(RR.L["tmogverifyall: no supported raids found in RetroRuns_Data."])
+                RR:Print(RR.L["tmogverifyall: no supported instances found in RetroRuns_Data."])
             else
                 -- Wall-time estimate: per boss the coverage pass walks 4
                 -- difficulties, each gated on WaitForEJLootSettled (up to
@@ -5366,7 +6036,7 @@ SlashCmdList["RETRORUNS"] = function(input)
                     totalBosses = totalBosses + #r.bosses
                 end
                 local estSeconds = totalBosses * 8
-                RR:Print(("tmogverifyall: %d raid(s), %d total bosses. Estimated wall-time ~%d minutes (worst case ~%d)."):format(
+                RR:Print(("tmogverifyall: %d instance(s), %d total bosses. Estimated wall-time ~%d minutes (worst case ~%d)."):format(
                     #raids, totalBosses,
                     math.ceil(estSeconds / 60),
                     math.ceil(totalBosses * 40 / 60)))
@@ -5376,10 +6046,10 @@ SlashCmdList["RETRORUNS"] = function(input)
                 local report = {}
                 local function reportAdd(line) table.insert(report, line) end
                 reportAdd(("tmogverifyall: %d raid(s)"):format(#raids))
-                reportAdd("Cross-raid audit. Per-raid summary follows; STATUS=clean")
+                reportAdd("Cross-instance audit. Per-instance summary follows; STATUS=clean")
                 reportAdd("means no findings. STATUS=needs-review means at least one")
                 reportAdd("error or warning fired; re-run `/rr tmogverify <name>` on")
-                reportAdd("that raid for actionable per-item detail.")
+                reportAdd("that instance for actionable per-item detail.")
                 reportAdd("")
 
                 local raidIdx = 0
@@ -5523,7 +6193,7 @@ SlashCmdList["RETRORUNS"] = function(input)
                             if info and info.itemID == probeID then
                                 probeFound = true
                                 local _, _, _, _, _, _, _, _, equipLoc =
-                                    GetItemInfo(info.itemID)
+                                    C_Item.GetItemInfo(info.itemID)
                                 probeHasEquipLoc = equipLoc
                                 break
                             end
@@ -5601,7 +6271,7 @@ SlashCmdList["RETRORUNS"] = function(input)
     elseif cmd == "cancelnav" then
         if RR.state.activeRoute then
             RR:CancelNavRoute()
-            RR:Print(RR.L["Navigation cancelled."])
+            RR:Print(RR.L["Navigation canceled."])
         else
             RR:Print(RR.L["No active navigation route."])
         end
@@ -5621,11 +6291,10 @@ SlashCmdList["RETRORUNS"] = function(input)
             RR:Print(RR.L["  /rr  resetsegments               (clear persisted segment state)"])
             RR:Print(RR.L["  /rr  kill <name> | unkill <name> (manual kill-state override)"])
             RR:Print(RR.L["  /rr  record [start|stop|dump|reset|status|break|tp <dest>|note <text>]"])
-            RR:Print(RR.L["  /rr  sessionlog [all]            (recorder session log; omit `all` for current-raid only)"])
-            RR:Print(RR.L["  /rr  lintroute [raid name]       (structural lint of raid routing data)"])
+            RR:Print(RR.L["  /rr  sessionlog [all]            (recorder session log; omit `all` for current-instance only)"])
+            RR:Print(RR.L["  /rr  lintroute [instance name]   (structural lint of instance routing data)"])
             RR:Print(RR.L["  /rr  diag                        (consolidated engine, zone and session logs)"])
             RR:Print(RR.L["  /rr  mapicons                    (dump exact coords of every Blizzard icon on the visible map)"])
-            RR:Print(RR.L["  /rr  raidcapture                 (full new-raid tier + loot harvest)"])
             RR:Print(RR.L["  /rr  weaponharvest               (harvest CN weapon-token pools)"])
             RR:Print(RR.L["  /rr  vendorscan                  (scan open merchant frame for items+costs)"])
             RR:Print(RR.L["  /rr  tmogtest <itemID>           (transmog diagnostic)"])
@@ -5634,9 +6303,9 @@ SlashCmdList["RETRORUNS"] = function(input)
             RR:Print(RR.L["  /rr  srctest <sourceID>          (transmog source diagnostic)"])
             RR:Print(RR.L["  /rr  specialtest <itemID>        (special-loot API probe)"])
             RR:Print(RR.L["  /rr  dottest <itemID>            (per-diff dot state probe)"])
-            RR:Print(RR.L["  /rr  tmogaudit [raid name]       (full-raid tmog audit dump)"])
-            RR:Print(RR.L["  /rr  tmogverify [raid name]      (full-raid data-integrity audit)"])
-            RR:Print(RR.L["  /rr  tmogverifyall               (run tmogverify across every shipped raid)"])
+            RR:Print(RR.L["  /rr  tmogaudit [instance name]   (full-instance tmog audit dump)"])
+            RR:Print(RR.L["  /rr  tmogverify [instance name]  (full-instance data-integrity audit)"])
+            RR:Print(RR.L["  /rr  tmogverifyall               (run tmogverify across every shipped instance)"])
             RR:Print(RR.L["  /rr  ejdiff <encID> [itemID]     (EJ per-difficulty probe)"])
             RR:Print(RR.L["  /rr  tmogsrc | tmogtrace         (transmog internals)"])
             RR:Print(RR.L["  /rr  ej                          (EJ + instance-info dump for bring-up)"])
@@ -5647,7 +6316,7 @@ SlashCmdList["RETRORUNS"] = function(input)
         else
             RR:Print(RR.L["RetroRuns commands:"])
             RR:Print(RR.L["  /rr                  (toggle main panel)"])
-            RR:Print(RR.L["  /rr  status          (current raid, step, kill state)"])
+            RR:Print(RR.L["  /rr  status          (current instance, step, kill state)"])
             RR:Print(RR.L["  /rr  tmog            (open transmog browser)"])
             RR:Print(RR.L["  /rr  skips           (account-wide raid skip status)"])
             RR:Print(RR.L["  /rr  settings        (open settings window)"])
@@ -5666,7 +6335,7 @@ RR.frame:SetScript("OnEvent", function(_, event, ...)
             RR:ApplyLocale()
             if RR:GetSetting("debug") then ValidateRaidData() end
             C_Timer.After(0, function()
-                RR:RestorePanelPosition()
+                RR:RestorePanelPosition("addon-loaded")
                 RR:InitMinimapButton()
                 RR:InitDialogTriggers()
                 RR:RefreshAll()
@@ -5697,10 +6366,8 @@ RR.frame:SetScript("OnEvent", function(_, event, ...)
         -- inspects debugstack(). transient=true is the right semantic
         -- for our entrance-button waypoints -- short-lived per-click
         -- destinations that shouldn't displace AWP's persistent manual
-        -- queue. Guarded on the API existing so older AWP versions (or
-        -- AWP not installed at all) silently no-op. AWP's own README
-        -- documents the API as the integration entry point for partner
-        -- addons; SilverDragon and RareScanner are the existing examples.
+        -- queue. Guarded on the API existing so an older version, or its
+        -- absence, silently no-ops.
         if _G.AzerothWaypointNS
             and type(_G.AzerothWaypointNS.RegisterExternalWaypointSource) == "function"
         then
@@ -5731,7 +6398,7 @@ RR.frame:SetScript("OnEvent", function(_, event, ...)
                 local ts = raid.tierSets and raid.tierSets.tokenSources
                 if ts then
                     for tokenID in pairs(ts) do
-                        GetItemInfo(tokenID)
+                        C_Item.GetItemInfo(tokenID)
                     end
                 end
             end
@@ -5740,6 +6407,7 @@ RR.frame:SetScript("OnEvent", function(_, event, ...)
     elseif event == "PLAYER_ENTERING_WORLD" then
         local isInitialLogin, isReloadingUi = ...
         RR.state.isReloadingUi = isReloadingUi and true or false
+
         RR:ZoneLog(("PEW: isInitialLogin=%s isReloadingUi=%s"):format(
             tostring(isInitialLogin), tostring(isReloadingUi)))
 
@@ -5748,7 +6416,22 @@ RR.frame:SetScript("OnEvent", function(_, event, ...)
         -- override the position applied at load time on installs where a
         -- character still carries an old per-character entry. Running the
         -- restore again after that pass makes the shared position final.
-        RR:RestorePanelPosition()
+        RR:RestorePanelPosition("player-entering-world")
+
+        -- Load-time visibility, applied once per login. The panel painted
+        -- from its saved state back at ADDON_LOADED, so a login refreshes
+        -- to pick the new values up; both loads sit behind the loading
+        -- screen until here, so nothing visible changes underneath.
+        if isInitialLogin then
+            RR:ApplyLaunchMode()
+            RR:RefreshAll()
+        end
+
+        -- The random-dungeon list the Timewalking marker reads answers
+        -- empty until the client's first lock-info push, so the login
+        -- paint shows no marker. Ask for the push; the handler repaints
+        -- when it lands.
+        if RequestLFDPlayerLockInfo then RequestLFDPlayerLockInfo() end
 
         -- On initial login (not /reload), wipe the persisted zone log
         -- so stale entries from prior sessions don't carry forward.
@@ -5764,9 +6447,17 @@ RR.frame:SetScript("OnEvent", function(_, event, ...)
             RetroRunsDB.visitedMapIDs      = nil
             RetroRunsDB.stepVisitedMapIDs  = nil
             RR:ZoneLog("PEW: initial login -- wiped zone log")
+            -- The first seconds after a login are a settle window: the
+            -- client's map reads can name the wrong floor outright
+            -- so the wing hold stays provisional
+            -- until it closes.
+            RR.state.loginSettleUntil = GetTime() + 30
         end
 
         C_Timer.After(1.0, function() RR:HandleLocationChange() end)
+
+    elseif event == "LFG_LOCK_INFO_RECEIVED" then
+        RR:RefreshTimewalkingFromLockInfo()
 
     elseif event == "ZONE_CHANGED_NEW_AREA"
         or event == "ZONE_CHANGED"
@@ -5801,6 +6492,22 @@ RR.frame:SetScript("OnEvent", function(_, event, ...)
             -- prompt-vs-silent-restore with a valid lockout.
             RR:ZoneLog("UPDATE_INSTANCE_INFO handler: re-driving deferred load decision")
             RR:HandleLocationChange()
+        end
+
+    elseif event == "PLAYER_LOGOUT" then
+        -- Fires on camp, exit and /reload alike, just before SavedVariables
+        -- write out -- the one moment the logout spot can be stamped.
+        if RR.StampLastSeen then RR:StampLastSeen() end
+
+    elseif event == "SCENARIO_CRITERIA_UPDATE" then
+        -- A scenario objective changed state. Scenario triggers are state
+        -- checks, so no payload is carried; the advance re-reads the API.
+        -- The same update also carries kill completions, and it is the
+        -- only witness to a kill whose ENCOUNTER_END and BOSS_KILL both
+        -- fail to arrive.
+        if RR.currentRaid and RR.state.loadedRaidKey then
+            RR:ApplyLiveScenarioKills("criteria update")
+            RR:AdvanceProgress("scenario")
         end
 
     elseif event == "ENCOUNTER_END" then
@@ -5919,6 +6626,34 @@ RR.frame:SetScript("OnEvent", function(_, event, ...)
         -- mapID for phase 2 platforms (Tindral Northern Boughs,
         -- Smolderon's bridge, Fyrakk's transit).
         RR.state.inEncounter = true
+        -- Remember which boss this is, so the transmog button can open on
+        -- it. A routed instance takes the boss from its active step; an
+        -- unrouted one (every dungeon, until its route is built) has no
+        -- step to read, and the boss being pulled is the best answer
+        -- available. Kept after the fight so the button still lands on it
+        -- while looting.
+        local startedEncounterID = ...
+        -- Logged as well as END: without this pair there is no way to tell
+        -- a dropped END from an encounter that never engaged at all.
+        RR:ZoneLog(("ENCOUNTER_START fired: id=%s loadedKey=%s currentKey=%s")
+            :format(tostring(startedEncounterID),
+                    tostring(RR.state.loadedRaidKey),
+                    tostring(RR:GetRaidContextKey())))
+        local startedBoss = RR:GetBossByEncounterID(startedEncounterID)
+        if startedBoss then
+            RR.state.lastEncounterBossIndex = startedBoss.index
+            -- A boss cannot be pulled twice in one spawned instance, so an
+            -- encounter starting on a boss already recorded dead proves the
+            -- instance reset while the run record survived.
+            if RR.state.bossesKilled[startedBoss.index]
+                and not RR.state.testMode
+                and not RR:GetCurrentLockoutId()
+                and RR.HandleStaleRunRecord then
+                RR:ZoneLog(("encounter started on recorded-dead boss %d")
+                    :format(startedBoss.index))
+                RR:HandleStaleRunRecord()
+            end
+        end
         if RR.UI and RR.UI.Update then RR.UI.Update() end
 
     elseif event == "GET_ITEM_INFO_RECEIVED" then
@@ -5944,6 +6679,49 @@ RR.frame:SetScript("OnEvent", function(_, event, ...)
     end
 end)
 
+-- "Reset all instances" ends every run outright, so the kill record for a
+-- non-saving instance has to go with it -- otherwise a mount farmer's next
+-- lap would open with the previous lap's bosses already checked off. Hooked
+-- rather than read from chat: the hook fires on the actual call and needs
+-- no localized message matching.
+if type(_G.ResetInstances) == "function" then
+    hooksecurefunc("ResetInstances", function()
+        -- The hook fires even when the game refuses the reset, which it
+        -- always does for the instance the player is standing in -- so a
+        -- record describing that instance survives the call.
+        local info = RR:GetCurrentInstanceInfo()
+        local inside = (info.instanceType == "party" or info.instanceType == "raid")
+            and info.instanceID or nil
+        local cleared, kept = 0, 0
+        local function judge(record)
+            -- The game refuses to reset the instance the player stands in,
+            -- wings included -- they share the map -- so those slots survive.
+            return record and inside and record.instanceID == inside
+        end
+        if RetroRunsDB then
+            if RetroRunsDB.activeRun and not judge(RetroRunsDB.activeRun) then
+                RetroRunsDB.activeRun = nil
+                cleared = cleared + 1
+            elseif RetroRunsDB.activeRun then
+                kept = kept + 1
+            end
+            for jid, record in pairs(RetroRunsDB.activeRuns or {}) do
+                if judge(record) then
+                    kept = kept + 1
+                else
+                    RetroRunsDB.activeRuns[jid] = nil
+                    cleared = cleared + 1
+                end
+            end
+        end
+        if cleared > 0 or kept > 0 then
+            RR:ZoneLog(("ResetInstances called: %d record(s) cleared, %d kept")
+                :format(cleared, kept))
+        end
+        RR:AdvanceInstanceGeneration()
+    end)
+end
+
 RR.frame:RegisterEvent("ADDON_LOADED")
 RR.frame:RegisterEvent("PLAYER_LOGIN")
 RR.frame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -5951,10 +6729,13 @@ RR.frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 RR.frame:RegisterEvent("ZONE_CHANGED")
 RR.frame:RegisterEvent("ZONE_CHANGED_INDOORS")
 RR.frame:RegisterEvent("UPDATE_INSTANCE_INFO")
+RR.frame:RegisterEvent("LFG_LOCK_INFO_RECEIVED")
 RR.frame:RegisterEvent("ENCOUNTER_END")
+RR.frame:RegisterEvent("SCENARIO_CRITERIA_UPDATE")
 RR.frame:RegisterEvent("BOSS_KILL")
 RR.frame:RegisterEvent("ENCOUNTER_START")
 RR.frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+RR.frame:RegisterEvent("PLAYER_LOGOUT")
 
 -------------------------------------------------------------------------------
 -- Tickers
@@ -5966,6 +6747,18 @@ RR.frame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 -- buffer (60 entries per minute) and evicts the entries that matter.
 local heartbeatTicks = 0
 C_Timer.NewTicker(1.0, function()
+    -- Outside an instance the full heartbeat stays off, but the footer's
+    -- instance counter is a CLOCK -- its minutes tick down while the player
+    -- stands still, and zone events are the only other repaint out there.
+    -- A narrow refresh every 30s keeps it honest without waking the panel.
+    if not RR.currentRaid then
+        heartbeatTicks = heartbeatTicks + 1
+        if heartbeatTicks % 30 == 0
+            and RR.UI and RR.UI.RefreshFooterStatus then
+            RR.UI.RefreshFooterStatus()
+        end
+        return
+    end
     if RR.currentRaid
         and RR.state.loadedRaidKey == RR:GetRaidContextKey() then
         heartbeatTicks = heartbeatTicks + 1
@@ -5989,6 +6782,13 @@ C_Timer.NewTicker(1.0, function()
                 RR.state.lastPolledMapID = nowMapID
                 RR:AdvanceProgress("heartbeat")
             end
+        end
+
+        -- Scenario-criteria backstop, every fifth tick. SCENARIO_CRITERIA_
+        -- UPDATE is the primary path; this bounds how long a missed kill
+        -- can sit unrecorded when no further update is coming.
+        if heartbeatTicks % 5 == 0 and RR.ApplyLiveScenarioKills then
+            RR:ApplyLiveScenarioKills("heartbeat")
         end
     end
 end)

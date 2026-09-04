@@ -12,7 +12,14 @@ RetroRuns_DungeonData[777] = {
     name              = "Assault on Violet Hold",
     expansion         = "Legion",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "7.0.3",
+
+    entrance = {
+        mapID = 627,
+        x     = 0.6795,
+        y     = 0.7046,
+    },
 
     gloryMeta = {
         id   = 11163,
@@ -86,7 +93,7 @@ RetroRuns_DungeonData[777] = {
             name               = "Millificent Manastorm",
             journalEncounterID = 1688,
             achievements       = {
-                { id = 10553, name = "You're Just Making It WORSE!", meta = true },
+                { id = 10553, name = "You're Just Making It WORSE!", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 137444, slot = "Feet", name = "Plasma-Drilled Steel Toes", sources = { [14]=79036, [15]=80160, [16]=79036 } },
@@ -142,12 +149,6 @@ RetroRuns_DungeonData[777] = {
             name               = "Fel Lord Betrug",
             journalEncounterID = 1711,
             achievements       = {
-                { id = 10798, name = "Assault on Violet Hold" },
-                { id = 10799, name = "Heroic: Assault on Violet Hold" },
-                { id = 10800, name = "Mythic: Assault on Violet Hold" },
-                { id = 60846, name = "Assault on Violet Hold" },
-                { id = 60847, name = "Heroic: Assault on Violet Hold" },
-                { id = 60848, name = "Mythic: Assault on Violet Hold" },
             },
             loot = {
                 { id = 134407, slot = "Back", name = "Rugged Marauder Cape", sources = { [14]=79047, [15]=80811, [16]=79047 } },

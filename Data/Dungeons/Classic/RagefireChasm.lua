@@ -12,7 +12,14 @@ RetroRuns_DungeonData[226] = {
     name              = "Ragefire Chasm",
     expansion         = "Classic",
     difficultyModel   = "dungeonBinary",
+    availableDifficulties = { 14 },
     patch             = "1.0",
+
+    entrance = {
+        mapID = 86,
+        x     = 0.6900,
+        y     = 0.5030,
+    },
 
     bosses = {
         {
@@ -60,7 +67,6 @@ RetroRuns_DungeonData[226] = {
             name               = "Lava Guard Gordoth",
             journalEncounterID = 697,
             achievements       = {
-                { id = 629, name = "Ragefire Chasm" },
             },
             loot = {
                 { id = 82886, slot = "Feet", name = "Gorewalker Treads", sources = { [14]=42168 } },
@@ -68,6 +74,113 @@ RetroRuns_DungeonData[226] = {
                 { id = 82888, slot = "Two-Hand", name = "Heartboiler Staff", sources = { [14]=42169 } },
                 { id = 151424, slot = "Waist", name = "Belt of Boundless Fury", sources = { [14]=89427 } },
                 { id = 82883, slot = "Weapon", name = "Bloodcursed Felblade", sources = { [14]=42165 } },
+            },
+        },
+    },
+
+    exitNote    = "You can jump in the lava near Slagmaw to kill yourself for a respawn at the entrance.",
+    minExitNote = "Death by lava near Slagmaw",
+
+    routing = {
+
+        -- 1. Adarogg (boss 1)
+        {
+            step      = 1,
+            priority  = 1,
+            bossIndex = 1,
+            title     = "Adarogg",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 213 },
+                    kind    = "path",
+                    note    = "After zoning in, head straight south until you reach ^Adarogg^.",
+                    minNote = "South to Adarogg",
+                    points  = {
+                        { 0.659, 0.085 },
+                        { 0.685, 0.112 },
+                        { 0.664, 0.201 },
+                        { 0.661, 0.352 },
+                        { 0.652, 0.417 },
+                        { 0.673, 0.616 },
+                    },
+                },
+            },
+        },
+
+        -- 2. Dark Shaman Koranthal (boss 2)
+        {
+            step      = 2,
+            priority  = 1,
+            bossIndex = 2,
+            title     = "Dark Shaman Koranthal",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 213 },
+                    kind    = "path",
+                    note    = "After killing ^Adarogg^, loop around to the north and continue until you reach ^Dark Shaman Koranthal^.",
+                    minNote = "Loop north to Koranthal",
+                    points  = {
+                        { 0.668, 0.688 },
+                        { 0.634, 0.701 },
+                        { 0.600, 0.678 },
+                        { 0.605, 0.512 },
+                        { 0.592, 0.419 },
+                        { 0.604, 0.353 },
+                        { 0.589, 0.310 },
+                        { 0.567, 0.299 },
+                    },
+                },
+            },
+        },
+
+        -- 3. Slagmaw (boss 3)
+        {
+            step      = 3,
+            priority  = 1,
+            bossIndex = 3,
+            title     = "Slagmaw",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 213 },
+                    kind    = "path",
+                    note    = "After killing ^Dark Shaman Koranthal^, continue on the path south and find ^Slagmaw^.",
+                    minNote = "South to Slagmaw",
+                    points  = {
+                        { 0.516, 0.360 },
+                        { 0.524, 0.468 },
+                        { 0.490, 0.497 },
+                        { 0.398, 0.458 },
+                        { 0.404, 0.533 },
+                    },
+                },
+            },
+        },
+
+        -- 4. Lava Guard Gordoth (boss 4)
+        {
+            step      = 4,
+            priority  = 1,
+            bossIndex = 4,
+            title     = "Lava Guard Gordoth",
+            requires  = { },
+            segments  = {
+                {
+                    when    = { mapID = 213 },
+                    kind    = "path",
+                    note    = "After you take down ^Slagmaw^, continue southwest to reach the final boss, ^Lava Guard Gordoth^.",
+                    minNote = "Southwest to Gordoth",
+                    points  = {
+                        { 0.412, 0.616 },
+                        { 0.415, 0.683 },
+                        { 0.336, 0.676 },
+                        { 0.314, 0.695 },
+                        { 0.313, 0.742 },
+                        { 0.325, 0.783 },
+                    },
+                },
             },
         },
     },

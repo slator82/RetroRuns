@@ -12,7 +12,15 @@ RetroRuns_DungeonData[1202] = {
     name              = "Ruby Life Pools",
     expansion         = "Dragonflight",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "10.0.2",
+    timewalking       = true,
+
+    entrance = {
+        mapID = 2022,
+        x     = 0.6020,
+        y     = 0.7560,
+    },
 
     gloryMeta = {
         id   = 16295,
@@ -28,7 +36,7 @@ RetroRuns_DungeonData[1202] = {
             name               = "Melidrussa Chillworn",
             journalEncounterID = 2488,
             achievements       = {
-                { id = 16402, name = "Dragon Kill Points", meta = true },
+                { id = 16402, name = "Dragon Kill Points", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 193728, slot = "Feet", name = "Scaleguard's Stalwart Greatboots", sources = { [14]=180841, [15]=180841, [16]=180841 } },
@@ -42,7 +50,7 @@ RetroRuns_DungeonData[1202] = {
             name               = "Kokia Blazehoof",
             journalEncounterID = 2485,
             achievements       = {
-                { id = 16320, name = "Does Steam Do Fire Damage?", meta = true },
+                { id = 16320, name = "Does Steam Do Fire Damage?", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 193763, slot = "Back", name = "Fireproof Drape", sources = { [14]=180867, [15]=180867, [16]=180867 } },
@@ -57,10 +65,7 @@ RetroRuns_DungeonData[1202] = {
             name               = "Kyrakka and Erkhart Stormvein",
             journalEncounterID = 2503,
             achievements       = {
-                { id = 16266, name = "Ruby Life Pools" },
-                { id = 16267, name = "Heroic: Ruby Life Pools" },
-                { id = 16268, name = "Mythic: Ruby Life Pools" },
-                { id = 16440, name = "Are You My Broodmother?", meta = true },
+                { id = 16440, name = "Are You My Broodmother?", meta = true, soloable = "kinda" },
             },
             loot = {
                 { id = 193753, slot = "Chest", name = "Breastplate of Soaring Terror", sources = { [14]=180859, [15]=180859, [16]=180859 } },

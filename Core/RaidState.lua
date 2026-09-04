@@ -32,6 +32,7 @@ function RR:SyncFromSavedRaidInfo(requestRaidInfo)
     if not self.currentRaid then
         wipe(self.state.bossesKilled)
         wipe(self.state.bossesKilledViaPairOnly)
+        wipe(self.state.bossPartialKills)
         wipe(self.state.bossesSkipped)
         self:ComputeNextStep()
         return false
@@ -62,7 +63,14 @@ function RR:SyncFromSavedRaidInfo(requestRaidInfo)
         -- raid the one weekly lockout is stored under whichever member of
         -- the pair was entered first, and its kills are real on both sides
         -- (the game leaves those bosses absent in the sibling size).
-        if isRaid
+        -- Match the row TYPE to the instance we are standing in:
+        -- GetSavedInstanceInfo reports isRaid=false for a saved dungeon, so
+        -- a raid-only test discarded every Heroic and Mythic dungeon
+        -- lockout and their kills never came back after a reload. (Normal
+        -- dungeons save nothing at all, so they have no row here either
+        -- way -- their progress is run-scoped by the game's design.)
+        local wantRaidRow = (self.currentRaid.kind ~= "dungeon")
+        if ((isRaid and true or false) == wantRaidRow)
             and locked and (reset or 0) > 0
             and instanceID == self.currentRaid.instanceID
             and self:SavedRowMatchesActiveLockout(difficultyId) then

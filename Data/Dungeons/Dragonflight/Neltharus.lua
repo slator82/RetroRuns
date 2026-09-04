@@ -12,7 +12,15 @@ RetroRuns_DungeonData[1199] = {
     name              = "Neltharus",
     expansion         = "Dragonflight",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "10.0.2",
+    timewalking       = true,
+
+    entrance = {
+        mapID = 2022,
+        x     = 0.2542,
+        y     = 0.5680,
+    },
 
     gloryMeta = {
         id   = 16295,
@@ -27,8 +35,10 @@ RetroRuns_DungeonData[1199] = {
             index              = 1,
             name               = "Chargath, Bane of Scales",
             journalEncounterID = 2490,
+            -- Criterion prose reads "Chargath defeated" and does not carry the journal name.
+            scenarioCriteriaID = 54028,
             achievements       = {
-                { id = 16438, name = "Knowledge is... Preserved?", meta = true },
+                { id = 16438, name = "Knowledge is... Preserved?", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 193771, slot = "Feet", name = "Pristine Magma Stompers", sources = { [14]=180877, [15]=180877, [16]=180877 } },
@@ -41,7 +51,7 @@ RetroRuns_DungeonData[1199] = {
             name               = "Forgemaster Gorek",
             journalEncounterID = 2489,
             achievements       = {
-                { id = 16432, name = "Ready for Raiding VIII", meta = true },
+                { id = 16432, name = "Ready for Raiding VIII", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 193782, slot = "Chest", name = "Emberguard Harness", sources = { [14]=180886, [15]=180886, [16]=180886 } },
@@ -57,7 +67,7 @@ RetroRuns_DungeonData[1199] = {
             name               = "Magmatusk",
             journalEncounterID = 2494,
             achievements       = {
-                { id = 16453, name = "Liquid Hot Magma", meta = true },
+                { id = 16453, name = "Liquid Hot Magma", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 193787, slot = "Back", name = "Mammoth-Trainer's Drape", sources = { [14]=180891, [15]=180891, [16]=180891 } },
@@ -71,9 +81,6 @@ RetroRuns_DungeonData[1199] = {
             name               = "Warlord Sargha",
             journalEncounterID = 2501,
             achievements       = {
-                { id = 16263, name = "Neltharus" },
-                { id = 16264, name = "Heroic: Neltharus" },
-                { id = 16265, name = "Mythic: Neltharus" },
             },
             loot = {
                 { id = 193776, slot = "Chest", name = "Dragonkiln Chestguard", sources = { [14]=180880, [15]=180880, [16]=180880 } },

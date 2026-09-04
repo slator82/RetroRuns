@@ -29,6 +29,13 @@ local PAD_LEFT   = 16 + FRAME_INSET_X
 local PAD_RIGHT  = 12 + FRAME_INSET_X
 local BODY_WIDTH = PANEL_W - PAD_LEFT - PAD_RIGHT - 10
 
+-- One gap between every labelled section of the in-instance body -- travel
+-- pane, Boss Encounter, Achievements, Special Loot, Transmog Needed, Boss
+-- Progress. They read as peers, so they sit at equal distances; the chain
+-- had drifted to 8/4/4/8/12. On the UI table because the file sits at Lua
+-- 5.1's 200-local ceiling.
+UI.PANEL_SECTION_GAP = 8
+
 -- Title font. The 04B_03 pixel face covers ASCII only, so localized
 -- strings rendered in it must stay accent-free; locale files word their
 -- title-context entries accordingly.
@@ -84,15 +91,38 @@ local C_BLUE   = { 0.30, 0.80, 1.00 }
 local C_PINK_HEX = "f259c7"  -- C_PINK as a text-escape hex (RETRO pink)
 local C_LABEL  = "4DCCFF"   -- section label color (cyan, the RUNS wordmark blue)
 
--- Idle-list pill-row leading spacers: transparent fixed-width inline textures
--- that reserve exact pixel widths at the head of a pill string. The pill text,
+-- Idle-list pill-row leading spacers: fixed-width inline textures that
+-- reserve exact pixel widths at the head of a pill string. The pill text,
 -- the plane anchor, and the chevron measurement all read these.
+--
+-- Blizzard's blank Spacer texture, NOT a raid-target star tinted black. The
+-- escape's color arguments end at r:g:b -- there is no alpha slot -- so a
+-- "0:0:0" spacer is opaque BLACK. It hides against a solid panel and shows
+-- as a dark diamond the moment panel opacity is turned down.
 --   PILL_SUBLINE_INDENT  16px: indents the pill row so it reads as a sub-line
 --                        under the raid name.
 --   PILL_PLANE_GUTTER    18px: the column the nav plane sits in, at the head of
 --                        the row after the sub-line indent.
-RR.PILL_SUBLINE_INDENT = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:10:16:0:0:64:64:0:64:0:64:0:0:0:0|t"
-RR.PILL_PLANE_GUTTER   = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:14:18:0:0:64:64:0:64:0:64:0:0:0:0|t"
+RR.PILL_SUBLINE_INDENT = "|TInterface\\Common\\Spacer:10:16|t"
+-- Height 10, NOT 14. These spacers reserve WIDTH; their height is inert
+-- visually but not structurally -- an inline texture taller than the line
+-- stretches the FontString, and AutoSize budgets the idle list at one
+-- body-font line per row. At 14 every dungeon row (all of which carry this
+-- gutter) ran ~2px over budget, and fifteen of them ate the reserve that
+-- holds the legend divider clear of the list. Keep any blank spacer at or
+-- under the body font size.
+RR.PILL_PLANE_GUTTER   = "|TInterface\\Common\\Spacer:10:18|t"
+
+-- The same transparent spacer at an arbitrary width, for indenting a row's
+-- own leading edge (grouped dungeon wings). Width must be whole: a
+-- fractional one renders at an unpredictable rounded width.
+--
+-- NOT for lining columns up ACROSS rows -- that is a widget-layout problem
+-- and padding a string will not do it. See visual-recipes.
+function RR.PillSpacer(width)
+    return ("|TInterface\\Common\\Spacer:10:%d|t")
+        :format(math.max(1, math.floor(width)))
+end
 
 -- Known teleporter node names -- highlighted orange in travel text
 -------------------------------------------------------------------------------
@@ -175,12 +205,49 @@ end
 -- Main panel
 -------------------------------------------------------------------------------
 
+
+
 local panel = CreateFrame("Frame", "RetroRunsMainFrame", UIParent, "BackdropTemplate")
 panel:SetSize(PANEL_W, PANEL_H)
 panel:SetMovable(true)
 panel:EnableMouse(true)
 panel:RegisterForDrag("LeftButton")
 panel:SetClampedToScreen(true)
+
+-- Every persist of the panel's position goes through here, tagged with the
+-- code path that asked. Two shipped users report the panel drifting back to
+-- a default corner between logins, and the write sites are the suspects:
+-- a drag is user intent, but the minimize/maximize/AutoSize resizes ALSO
+-- persist a recomputed offset, so any pass that runs while the frame is not
+-- yet at its restored position can overwrite the real one. `/rr panelpos`
+-- prints the trace; it is kept regardless of the debug setting because the
+-- users who can reproduce this are not running debug builds.
+UI._panelPosTrace = {}
+function UI.SavePanelOffset(source, x, y)
+    -- Drop no-op writes. Kept from when AutoSize persisted a 1px
+    -- oscillation forever; only a drag writes now, but a cheap guard on a
+    -- SavedVariables write is worth keeping.
+    local newX = x and math.floor(x + 0.5) or nil
+    local newY = y and math.floor(y + 0.5) or nil
+    local curX = RR:GetSetting("panelAnchorX", 0)
+    local curY = RR:GetSetting("panelAnchorY", 0)
+    if (newX == nil or newX == curX) and (newY == nil or newY == curY) then
+        return
+    end
+    if newX then RR:SetSetting("panelAnchorX", newX) end
+    if newY then RR:SetSetting("panelAnchorY", newY) end
+    RR:SetSetting("panelAnchorSet", true)
+    local entry = ("%s x=%s y=%s (top=%s left=%s w=%.0f h=%.0f min=%s)"):format(
+        source,
+        newX or "-", newY or "-",
+        panel and panel:GetTop() and ("%.0f"):format(panel:GetTop()) or "nil",
+        panel and panel:GetLeft() and ("%.0f"):format(panel:GetLeft()) or "nil",
+        panel and panel:GetWidth() or 0, panel and panel:GetHeight() or 0,
+        tostring(RR:GetSetting("minimized")))
+    table.insert(UI._panelPosTrace, entry)
+    -- Ring: the interesting window is the login sequence, not an hour of play.
+    if #UI._panelPosTrace > 40 then table.remove(UI._panelPosTrace, 1) end
+end
 -- A drag owns the panel's position while in progress; the layout pass would
 -- otherwise re-anchor from the saved offsets and snap it back. isBeingDragged
 -- gates every geometry write, and the re-fit runs once at drag stop.
@@ -195,20 +262,15 @@ panel:SetScript("OnDragStop", function(self)
     -- then stores its position per character. Clearing it keeps persistence in
     -- our account-wide settings.
     self:SetUserPlaced(false)
-    -- Normalize the anchor back to CENTER/CENTER so saved offsets
-    -- restore correctly on reload.
-    local cx, cy   = self:GetCenter()
-    local pcx, pcy = UIParent:GetCenter()
-    local fscale   = self:GetEffectiveScale()
-    local pscale   = UIParent:GetEffectiveScale()
-    -- SetPoint offsets are in the anchored frame's scaled coords --
-    -- divide by fscale, not pscale.
-    local x = (cx * fscale - pcx * pscale) / fscale
-    local y = (cy * fscale - pcy * pscale) / fscale
-    self:ClearAllPoints()
-    self:SetPoint("CENTER", UIParent, "CENTER", x, y)
-    RR:SetSetting("panelX", math.floor(x + 0.5))
-    RR:SetSetting("panelY", math.floor(y + 0.5))
+    -- Normalize to a TOPLEFT anchor and store that. Top-left is
+    -- size-invariant, so a later resize moves nothing and a restore cannot
+    -- be wrong about how tall the frame happened to be.
+    local left, top = RR.TopLeftOffsets(self)
+    if left and top then
+        self:ClearAllPoints()
+        self:SetPoint("TOPLEFT", UIParent, "TOPLEFT", left, top)
+        UI.SavePanelOffset("drag", left, top)
+    end
     -- Any layout pass skipped while the drag was in progress runs now,
     -- against the freshly saved offsets.
     if UI.ApplyMinimizedState then UI.ApplyMinimizedState() end
@@ -350,6 +412,16 @@ end
 -- re-renders the legend.
 panel:SetHyperlinksEnabled(true)
 panel:SetScript("OnHyperlinkClick", function(_, link, text, button)
+    -- The travel note carries a {skip} link on an optional boss. Its
+    -- FontString belongs to the panel, so the click surfaces here rather
+    -- than on the encounter header's own handler.
+    local skipBossIndex = link and link:match("^rrskip:(%d+)$")
+    if skipBossIndex then
+        if UI.ConfirmSkipBoss then
+            UI.ConfirmSkipBoss(tonumber(skipBossIndex))
+        end
+        return
+    end
     if link == "retroruns:zygor_arrow" then
         local zgv = _G.ZygorGuidesViewer
         if zgv and zgv.db and zgv.db.profile then
@@ -419,21 +491,105 @@ panel.titleMinNote:SetShadowOffset(1, -1)
 panel.titleMinNote:SetShadowColor(0, 0, 0, 1)
 panel.titleMinNote:Hide()
 
--- Close button
--- Close button. Custom 20x20 frame (not Blizzard's UIPanelCloseButton,
+-- Close button. Custom 24x24 frame (not Blizzard's UIPanelCloseButton,
 -- whose 32x32 frame and fixed red-X can't be themed) using the retro
--- neon CloseIcon texture. Hover brightens via vertex color.
-panel.closeButton = CreateFrame("Button", nil, panel)
-panel.closeButton:SetSize(24, 24)
-panel.closeButton:SetPoint("TOPRIGHT", -10 - FRAME_INSET_X, -4 - FRAME_INSET_Y)
-do
-    local tex = panel.closeButton:CreateTexture(nil, "OVERLAY")
-    tex:SetTexture("Interface\\AddOns\\RetroRuns\\Media\\CloseIcon")
-    tex:SetAllPoints(panel.closeButton)
-    panel.closeButton._tex = tex
-    panel.closeButton:SetScript("OnEnter", function(self) self._tex:SetVertexColor(1.4, 1.4, 1.4) end)
-    panel.closeButton:SetScript("OnLeave", function(self) self._tex:SetVertexColor(1, 1, 1) end)
+-- neon CloseIcon texture. Hover brightens via vertex color. Shared by the
+-- main panel and every auxiliary window, so all five wear one X.
+-- Sets a dropdown bar's text. The template fills the bar from the selected
+-- entry; the override keeps the bar on the plain name where the entries
+-- carry count suffixes.
+function UI.SetDropdownText(dropdown, text)
+    if dropdown.OverrideText then
+        dropdown:OverrideText(text)
+    elseif dropdown.Text and dropdown.Text.SetText then
+        dropdown.Text:SetText(text)
+    end
 end
+
+-- The dropdown font: the small highlight face, one point larger. Built once
+-- and shared by every bar and menu entry.
+function UI.DropdownFont()
+    if UI._dropdownFont then return UI._dropdownFont end
+    local font = CreateFont("RetroRunsDropdownFont")
+    font:SetFontObject(GameFontHighlightSmall)
+    local path, size, flags = GameFontHighlightSmall:GetFont()
+    if path and size then
+        SafeSetFont(font, path, size + 1, flags or "")
+    end
+    UI._dropdownFont = font
+    return font
+end
+
+-- The dropdown arrow: a bare triangle in the panel's pink, in place of the
+-- template's boxed button. The template repaints the arrow from its mouse
+-- and state handlers, so the same look is reapplied after each of them.
+UI.DROPDOWN_ARROW_ATLAS = "common-dropdown-c-button-hover-arrow"
+UI.DROPDOWN_ARROW_COLOR = C_PINK
+UI.DROPDOWN_BAR_ATLAS   = "common-dropdown-textholder"
+
+function UI.ApplyDropdownArrow(dropdown)
+    local arrow = dropdown.Arrow
+    if not (arrow and arrow.SetAtlas) then return end
+    arrow:SetAtlas(UI.DROPDOWN_ARROW_ATLAS, true)
+    arrow:SetDesaturated(true)
+    local color = UI.DROPDOWN_ARROW_COLOR
+    arrow:SetVertexColor(color[1], color[2], color[3])
+    arrow:ClearAllPoints()
+    arrow:SetPoint("RIGHT", dropdown, "RIGHT", -6, 0)
+    -- The bar itself keeps its idle art under the mouse as well.
+    if dropdown.Background and dropdown.Background.SetAtlas then
+        dropdown.Background:SetAtlas(UI.DROPDOWN_BAR_ATLAS)
+    end
+    local highlight = dropdown.GetHighlightTexture and dropdown:GetHighlightTexture()
+    if highlight then highlight:SetAlpha(0) end
+end
+
+-- House styling for a dropdown bar: the shared font and the house arrow.
+function UI.StyleDropdown(dropdown)
+    if dropdown.Text and dropdown.Text.SetFontObject then
+        dropdown.Text:SetFontObject(UI.DropdownFont())
+    end
+    UI.ApplyDropdownArrow(dropdown)
+    for _, script in ipairs({ "OnEnter", "OnLeave", "OnMouseDown", "OnMouseUp",
+                              "OnShow", "OnEnable", "OnDisable" }) do
+        if dropdown:HasScript(script) then
+            dropdown:HookScript(script, UI.ApplyDropdownArrow)
+        end
+    end
+    -- The template echoes the bar's text as a tooltip on mouseover.
+    dropdown:HookScript("OnEnter", function(self)
+        if GameTooltip:GetOwner() == self then GameTooltip:Hide() end
+    end)
+end
+
+-- A menu entry in the same small font as the bar it drops from.
+function UI.MenuRadio(rootDescription, text, isSelected, setSelected)
+    local radio = rootDescription:CreateRadio(text, isSelected, setSelected)
+    if radio and radio.AddInitializer then
+        radio:AddInitializer(function(button)
+            local label = button.fontString or button.Text
+            if label and label.SetFontObject then
+                label:SetFontObject(UI.DropdownFont())
+            end
+        end)
+    end
+    return radio
+end
+
+function UI.MakeRetroCloseButton(parent)
+    local button = CreateFrame("Button", nil, parent)
+    button:SetSize(24, 24)
+    local tex = button:CreateTexture(nil, "OVERLAY")
+    tex:SetTexture("Interface\\AddOns\\RetroRuns\\Media\\CloseIcon")
+    tex:SetAllPoints(button)
+    button._tex = tex
+    button:SetScript("OnEnter", function(self) self._tex:SetVertexColor(1.4, 1.4, 1.4) end)
+    button:SetScript("OnLeave", function(self) self._tex:SetVertexColor(1, 1, 1) end)
+    return button
+end
+
+panel.closeButton = UI.MakeRetroCloseButton(panel)
+panel.closeButton:SetPoint("TOPRIGHT", -10 - FRAME_INSET_X, -4 - FRAME_INSET_Y)
 panel.closeButton:SetScript("OnClick", function()
     RR:SetSetting("showPanel", false)
     panel:Hide()
@@ -468,6 +624,416 @@ do
 end
 -- (OnClick handler wired further below, after UI.SetMinimized exists.)
 
+-- Shared sparkle for the search magnifying glasses: a small star that
+-- twinkles on the lens every few seconds, brand blue against the pink
+-- glass. Fields on the button, not locals: this file sits at the
+-- 200-local ceiling.
+function UI.AttachSearchSparkle(button)
+    button.sparkle = button:CreateTexture(nil, "OVERLAY")
+    button.sparkle:SetTexture("Interface\\Cooldown\\star4")
+    button.sparkle:SetBlendMode("ADD")
+    button.sparkle:SetVertexColor(0.30, 0.80, 1.00)
+    button.sparkle:SetSize(12, 12)
+    button.sparkle:SetPoint("TOPLEFT", button, "TOPLEFT", -1, 2)
+    button.sparkle:SetAlpha(0)
+    button.sparkleAnim = button.sparkle:CreateAnimationGroup()
+    button.sparkleAnim:SetLooping("REPEAT")
+    button.sparkleIn = button.sparkleAnim:CreateAnimation("Alpha")
+    button.sparkleIn:SetOrder(1)
+    button.sparkleIn:SetDuration(0.3)
+    button.sparkleIn:SetFromAlpha(0)
+    button.sparkleIn:SetToAlpha(0.9)
+    button.sparkleSpin = button.sparkleAnim:CreateAnimation("Rotation")
+    button.sparkleSpin:SetOrder(1)
+    button.sparkleSpin:SetDuration(1.1)
+    button.sparkleSpin:SetDegrees(90)
+    button.sparkleOut = button.sparkleAnim:CreateAnimation("Alpha")
+    button.sparkleOut:SetOrder(2)
+    button.sparkleOut:SetDuration(0.8)
+    button.sparkleOut:SetFromAlpha(0.9)
+    button.sparkleOut:SetToAlpha(0)
+    button.sparkleOut:SetEndDelay(3.2)
+    button.sparkleAnim:Play()
+end
+
+-- Raid/dungeon search shortcut on the minimized bar. Shown only while the
+-- bar is idle or run-complete -- the states whose expanded panel renders
+-- the instance list this search lands on. The appearance search lives on
+-- the transmog browser's own glass.
+panel.searchButton = CreateFrame("Button", nil, panel)
+panel.searchButton:SetSize(24, 24)
+panel.searchButton:SetNormalTexture("Interface\\Common\\UI-Searchbox-Icon")
+panel.searchButton:SetHighlightTexture("Interface\\Common\\UI-Searchbox-Icon", "ADD")
+do
+    local tex = panel.searchButton:GetNormalTexture()
+    if tex then tex:SetVertexColor(0.95, 0.35, 0.78) end
+end
+UI.AttachSearchSparkle(panel.searchButton)
+panel.searchButton:Hide()
+-- Which search a magnifying glass opens. Inside a loaded instance the
+-- player is looking at its loot, so the glass searches appearances; with
+-- no instance loaded the panel is showing the instance list and the glass
+-- searches that.
+-- The panel is showing the instance list rather than guiding a run: either
+-- no instance is loaded, or the run in the loaded one is finished. Two
+-- surfaces read this -- which search the glass opens, and which status the
+-- footer's center slot carries.
+function UI.IsShowingInstanceList()
+    if not RR.currentRaid then return true end
+    if RR.IsActiveRouteComplete and RR:IsActiveRouteComplete() then
+        return true
+    end
+    return false
+end
+
+function UI.SearchOpensTransmog()
+    return not UI.IsShowingInstanceList()
+end
+
+panel.searchButton:SetScript("OnClick", function()
+    -- Search opens on the bar itself; picking a result is what expands
+    -- the panel to show the landed row, or opens the browser on it. A
+    -- second click closes it.
+    if panel.idleSearchBox:IsShown() then
+        UI.CloseIdleSearch()
+    elseif UI.OpenIdleSearch then
+        UI.OpenIdleSearch(UI.SearchOpensTransmog() and "tmog" or "instance")
+    end
+end)
+
+-- Raid/dungeon search on the expanded idle panel: a glass left of the
+-- minimize button. Scope is the instance list only; a result flips the
+-- RAID | DUNGEON mode, expands the owning expansion (and wing group),
+-- and flashes the landed row.
+panel.idleSearchButton = CreateFrame("Button", nil, panel)
+panel.idleSearchButton:SetSize(24, 24)
+panel.idleSearchButton:SetNormalTexture("Interface\\Common\\UI-Searchbox-Icon")
+panel.idleSearchButton:SetHighlightTexture("Interface\\Common\\UI-Searchbox-Icon", "ADD")
+do
+    local tex = panel.idleSearchButton:GetNormalTexture()
+    if tex then tex:SetVertexColor(0.95, 0.35, 0.78) end
+end
+UI.AttachSearchSparkle(panel.idleSearchButton)
+panel.idleSearchButton:Hide()
+
+panel.idleSearchBox = CreateFrame("EditBox", "RetroRunsIdleSearchBox",
+    panel, "InputBoxTemplate")
+panel.idleSearchBox:SetAutoFocus(false)
+panel.idleSearchBox:SetSize(160, 20)
+panel.idleSearchBox:SetPoint("TOPRIGHT", panel.idleSearchButton,
+    "BOTTOMRIGHT", 0, -6)
+panel.idleSearchBox:SetFrameLevel(panel:GetFrameLevel() + 40)
+panel.idleSearchBox:SetMaxLetters(60)
+-- Dim placeholder naming the scope; clears as soon as anything is typed.
+panel.idleSearchBox.hint = panel.idleSearchBox:CreateFontString(nil,
+    "OVERLAY", "GameFontDisableSmall")
+panel.idleSearchBox.hint:SetPoint("LEFT", 2, 0)
+panel.idleSearchBox.hint:SetText(RR.L["Search for an instance"])
+panel.idleSearchBox:Hide()
+
+panel.idleSearchResults = CreateFrame("Frame", nil, panel, "BackdropTemplate")
+panel.idleSearchResults:SetBackdrop({
+    bgFile   = "Interface/Tooltips/UI-Tooltip-Background",
+    edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+    tile = true, tileSize = 16, edgeSize = 16,
+    insets = { left = 3, right = 3, top = 3, bottom = 3 },
+})
+panel.idleSearchResults:SetBackdropColor(0.05, 0.05, 0.05, 0.97)
+panel.idleSearchResults:SetPoint("TOPLEFT", panel.idleSearchBox,
+    "BOTTOMLEFT", -6, -2)
+panel.idleSearchResults:SetFrameLevel(panel:GetFrameLevel() + 40)
+panel.idleSearchResults:EnableMouse(true)
+panel.idleSearchResults:Hide()
+panel.idleSearchFoot = panel.idleSearchResults:CreateFontString(nil,
+    "OVERLAY", "GameFontDisableSmall")
+panel.idleSearchFoot:SetJustifyH("LEFT")
+panel.idleSearchFoot:Hide()
+
+do
+    local RESULT_MAX = 8
+    local RESULT_ROW_H = 16
+    local RESULT_PAD = 8
+    local rowButtons = {}
+
+    function UI.CloseIdleSearch()
+        panel.idleSearchBox:SetText("")
+        panel.idleSearchBox:ClearFocus()
+        panel.idleSearchBox:Hide()
+        panel.idleSearchResults:Hide()
+    end
+
+    function UI.OpenIdleSearch(mode)
+        -- One box serves two scopes: the instance list when idle, and
+        -- appearances while a run is live. The hint names which is active.
+        panel.searchMode = (mode == "tmog") and "tmog" or "instance"
+        panel.idleSearchBox.hint:SetText(panel.searchMode == "tmog"
+            and RR.L["Search for Tmog"] or RR.L["Search for an instance"])
+        -- The box's left edge starts under the live glass -- the bar's
+        -- when minimized, the idle panel's otherwise -- and hangs below
+        -- the title row instead of crossing the divider.
+        panel.idleSearchBox:ClearAllPoints()
+        if UI.IsMinimized and UI.IsMinimized() then
+            panel.idleSearchBox:SetPoint("TOPLEFT", panel.searchButton,
+                "BOTTOMLEFT", 0, -8)
+        else
+            panel.idleSearchBox:SetPoint("TOPLEFT", panel.idleSearchButton,
+                "BOTTOMLEFT", 0, -8)
+        end
+        panel.idleSearchBox:Show()
+        panel.idleSearchBox:SetFocus()
+    end
+
+    -- Instance-list search: raids and dungeons by name, localized or
+    -- authored. No per-item scope -- that search belongs to the browser.
+    function UI.QueryInstanceSearch(query, maxResults)
+        if not query or query:len() < 2 then return nil, 0 end
+        local needle = query:lower()
+        local matches = {}
+        local expansionsSeen = {}
+        local function consider(instance)
+            if not (instance and instance.instanceID
+                    and instance.instanceID > 0) then return end
+            expansionsSeen[instance.expansion or ""] = true
+            local localized = RR:GetLocalizedRaidName(instance)
+                or instance.name or ""
+            local expKey = instance.expansion or ""
+            local expLocalized = RR.L[expKey] or expKey
+            if localized:lower():find(needle, 1, true)
+                or (instance.name or ""):lower():find(needle, 1, true)
+                or expLocalized:lower():find(needle, 1, true)
+                or expKey:lower():find(needle, 1, true) then
+                table.insert(matches, {
+                    raid = instance,
+                    display = ("%s |cff9d9d9d(%s)|r"):format(localized,
+                        RR.L[instance.expansion or "Unknown"]),
+                })
+            end
+        end
+        for _, raid in pairs(RetroRuns_Data or {}) do
+            if raid.instanceID and raid.instanceID > 0 then
+                consider(RR:GetRaidByInstanceID(raid.instanceID) or raid)
+            end
+        end
+        for _, dungeon in pairs(RetroRuns_DungeonData or {}) do
+            consider(dungeon)
+        end
+        table.sort(matches, function(a, b) return a.display < b.display end)
+        -- An expansion whose own name matches leads the list: picking it
+        -- opens that whole section rather than one instance. Cyan, the
+        -- idle list's expansion-header color.
+        local combined = {}
+        for expKey in pairs(expansionsSeen) do
+            local expName = RR.L[expKey] or expKey
+            if expKey ~= "" and (expName:lower():find(needle, 1, true)
+                or expKey:lower():find(needle, 1, true)) then
+                table.insert(combined, { expansion = expKey,
+                    display = ("|cff00ffff%s|r"):format(expName) })
+            end
+        end
+        table.sort(combined, function(a, b) return a.display < b.display end)
+        for _, entry in ipairs(matches) do
+            table.insert(combined, entry)
+        end
+        local overflow = 0
+        if #combined > maxResults then
+            overflow = #combined - maxResults
+            for i = #combined, maxResults + 1, -1 do combined[i] = nil end
+        end
+        return combined, overflow
+    end
+
+    -- Fading band over the row a search landed on, the transmog band's
+    -- shape on the idle list. Built lazily: the shared flash constants
+    -- are defined further down the file.
+    function UI.FlashIdleListRow(raid)
+        if not raid then return end
+        if not panel.idleSearchFlash then
+            panel.idleSearchFlash = panel:CreateTexture(nil, "ARTWORK")
+            panel.idleSearchFlash:SetColorTexture(UI.FLASH_BAND_R,
+                UI.FLASH_BAND_G, UI.FLASH_BAND_B, UI.FLASH_BAND_ALPHA)
+            panel.idleSearchFlash:Hide()
+            panel.idleSearchFlashFade =
+                panel.idleSearchFlash:CreateAnimationGroup()
+            panel.idleSearchFlashAlpha =
+                panel.idleSearchFlashFade:CreateAnimation("Alpha")
+            panel.idleSearchFlashAlpha:SetFromAlpha(1)
+            panel.idleSearchFlashAlpha:SetToAlpha(0)
+            panel.idleSearchFlashAlpha:SetStartDelay(UI.FLASH_FADE_DELAY)
+            panel.idleSearchFlashAlpha:SetDuration(UI.FLASH_FADE_DURATION)
+            panel.idleSearchFlashFade:SetScript("OnFinished", function()
+                panel.idleSearchFlash:Hide()
+            end)
+        end
+        for _, fs in ipairs(panel.idleListLines) do
+            if fs._searchInstanceID == raid.instanceID and fs:IsShown() then
+                panel.idleSearchFlash:ClearAllPoints()
+                panel.idleSearchFlash:SetPoint("TOPLEFT", fs, "TOPLEFT", -2, 2)
+                panel.idleSearchFlash:SetPoint("BOTTOMRIGHT", fs,
+                    "BOTTOMLEFT", BODY_WIDTH, -2)
+                panel.idleSearchFlash:Show()
+                panel.idleSearchFlashFade:Stop()
+                panel.idleSearchFlashFade:Play()
+                return
+            end
+        end
+    end
+
+    function UI.SelectIdleSearchResult(entry)
+        RR.state = RR.state or {}
+        -- A jump REPLACES the expand state rather than adding to it, so
+        -- consecutive searches leave one section open, not a trail.
+        if entry.expansion then
+            -- The expansion itself was picked: open that section in the
+            -- current RAID | DUNGEON mode.
+            RR.state.expandedExpansions = { [entry.expansion] = true }
+            RR.state.expandedDungeonGroups = {}
+            UI.CloseIdleSearch()
+            UI.InvalidateIdleListCache()
+            UI.SetMinimized(false)
+            return
+        end
+        RR.state.idleListMode =
+            (entry.raid.kind == "dungeon") and "dungeon" or "raid"
+        RR.state.expandedExpansions =
+            { [entry.raid.expansion or "Unknown"] = true }
+        RR.state.expandedDungeonGroups = {}
+        -- A wing lives under its group heading; open that too. Keyed on
+        -- the authored name, matching the list builder.
+        local heading = (entry.raid.name or ""):match("^(.-) %- ")
+        if heading then
+            RR.state.expandedDungeonGroups[heading] = true
+        end
+        UI.CloseIdleSearch()
+        UI.InvalidateIdleListCache()
+        -- The canonical repaint: expands the panel when the search came
+        -- from the bar, and runs the full Update -- list, layout, and
+        -- AutoSize -- so rows land measured, not colliding.
+        UI.SetMinimized(false)
+        UI.FlashIdleListRow(entry.raid)
+    end
+
+    -- Picking dispatches on the mode the query ran under: an instance
+    -- result moves the idle list, an appearance result opens the browser
+    -- on that row.
+    local function SelectResult(entry)
+        if not entry then return end
+        if panel.searchMode == "tmog" then
+            UI.CloseIdleSearch()
+            UI.JumpToTmogEntry(entry)
+        else
+            UI.SelectIdleSearchResult(entry)
+        end
+    end
+
+    local function GetResultButton(idx)
+        local btn = rowButtons[idx]
+        if btn then return btn end
+        btn = CreateFrame("Button", nil, panel.idleSearchResults)
+        btn:SetHeight(RESULT_ROW_H)
+        btn:SetPoint("TOPLEFT", panel.idleSearchResults, "TOPLEFT",
+            RESULT_PAD, -RESULT_PAD - (idx - 1) * RESULT_ROW_H)
+        btn:SetPoint("RIGHT", panel.idleSearchResults, "RIGHT",
+            -RESULT_PAD, 0)
+        btn.text = btn:CreateFontString(nil, "OVERLAY",
+            "GameFontHighlightSmall")
+        btn.text:SetPoint("LEFT", 0, 0)
+        btn.text:SetJustifyH("LEFT")
+        btn.hl = btn:CreateTexture(nil, "HIGHLIGHT")
+        btn.hl:SetAllPoints()
+        btn.hl:SetColorTexture(1, 1, 1, 0.08)
+        btn:SetScript("OnClick", function(self)
+            SelectResult(self.entry)
+        end)
+        rowButtons[idx] = btn
+        return btn
+    end
+
+    local function UpdateResults()
+        local query = panel.idleSearchBox:GetText()
+        local matches, overflow
+        if panel.searchMode == "tmog" then
+            matches, overflow = UI.QueryTmogSearch(query, RESULT_MAX)
+        else
+            matches, overflow = UI.QueryInstanceSearch(query, RESULT_MAX)
+        end
+        for _, btn in ipairs(rowButtons) do
+            btn:Hide()
+            btn.entry = nil
+        end
+        panel.idleSearchFoot:Hide()
+        if not matches then
+            panel.idleSearchResults:Hide()
+            return
+        end
+        local widest, shown = 0, 0
+        for idx, entry in ipairs(matches) do
+            local btn = GetResultButton(idx)
+            btn.entry = entry
+            btn.text:SetText(entry.display)
+            btn:Show()
+            local w = btn.text:GetStringWidth() or 0
+            if w > widest then widest = w end
+            shown = idx
+        end
+        local lines = shown
+        local footText
+        if shown == 0 then
+            footText = RR.L["No matches."]
+        elseif overflow > 0 then
+            footText = (RR.L["+%d more"]):format(overflow)
+        end
+        if footText then
+            panel.idleSearchFoot:SetText(footText)
+            panel.idleSearchFoot:ClearAllPoints()
+            panel.idleSearchFoot:SetPoint("TOPLEFT", panel.idleSearchResults,
+                "TOPLEFT", RESULT_PAD, -RESULT_PAD - shown * RESULT_ROW_H)
+            panel.idleSearchFoot:Show()
+            local w = panel.idleSearchFoot:GetStringWidth() or 0
+            if w > widest then widest = w end
+            lines = lines + 1
+        end
+        panel.idleSearchResults:SetSize(
+            math.min(360, math.max(panel.idleSearchBox:GetWidth() + 12,
+                widest + RESULT_PAD * 2 + 4)),
+            lines * RESULT_ROW_H + RESULT_PAD * 2)
+        panel.idleSearchResults:Show()
+    end
+
+    panel.idleSearchBox:SetScript("OnTextChanged", function(self, userInput)
+        -- Unconditional: a programmatic SetText("") has to restore the hint
+        -- just as typing has to clear it.
+        self.hint:SetShown(self:GetText() == "")
+        if userInput then UpdateResults() end
+    end)
+    panel.idleSearchBox:SetScript("OnEscapePressed", UI.CloseIdleSearch)
+    panel.idleSearchBox:SetScript("OnEnterPressed", function()
+        local firstBtn = rowButtons[1]
+        if firstBtn and firstBtn:IsShown() and firstBtn.entry then
+            SelectResult(firstBtn.entry)
+        end
+    end)
+end
+
+panel.idleSearchButton:SetScript("OnClick", function()
+    if panel.idleSearchBox:IsShown() then
+        UI.CloseIdleSearch()
+    else
+        UI.OpenIdleSearch(UI.SearchOpensTransmog() and "tmog" or "instance")
+    end
+end)
+panel.idleSearchButton:SetScript("OnEnter", function(self)
+    -- Nothing to hint once the box is open: the tooltip anchors right,
+    -- straight over the box the click just revealed, and covers what the
+    -- player is typing into.
+    if panel.idleSearchBox and panel.idleSearchBox:IsShown() then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText(RR.L["Search"], 1, 1, 1)
+    GameTooltip:Show()
+end)
+panel.idleSearchButton:SetScript("OnLeave", function()
+    GameTooltip:Hide()
+end)
+
 -- Test-mode label, positioned to clear both the close X and the
 -- minimize button.
 panel.mode = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -490,10 +1056,13 @@ local function AddField(anchor, anchorPoint, relPoint, offsetY, width, template)
     return fs
 end
 
+-- Instance name and its pill row are CENTERED under the wordmark rather
+-- than left-aligned with the body. Spans the full panel width so the text
+-- centers on the frame, not on a column inset from it.
 panel.raid = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-panel.raid:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD_LEFT, -30 - FRAME_INSET_Y)
-panel.raid:SetWidth(PANEL_W - PAD_LEFT - 80)
-panel.raid:SetJustifyH("LEFT")
+panel.raid:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -30 - FRAME_INSET_Y)
+panel.raid:SetWidth(PANEL_W)
+panel.raid:SetJustifyH("CENTER")
 
 -- LFR wing subline, shown only in a wing (populated in UI.Update). Its own
 -- FontString so it can run 4pt smaller than the raid name; an empty string
@@ -502,13 +1071,14 @@ panel.raid:SetJustifyH("LEFT")
 -- minus 4 in UI.Update, where the live raid font size is readable.
 panel.wingLine = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 panel.wingLine:SetPoint("TOPLEFT", panel.raid, "BOTTOMLEFT", 0, -2)
-panel.wingLine:SetWidth(PANEL_W - PAD_LEFT - 80)
-panel.wingLine:SetJustifyH("LEFT")
+panel.wingLine:SetWidth(PANEL_W)
+panel.wingLine:SetJustifyH("CENTER")
 panel.wingLine:SetText("")
 
 -- Per-difficulty kill-count pills row. Active difficulty in white,
 -- others in gray. Format: "[ LFR x/y | N x/y | H x/y | M x/y ]".
-panel.pills = AddField(panel.wingLine, "TOPLEFT", "BOTTOMLEFT", -2, BODY_WIDTH, "GameFontNormalSmall")
+panel.pills = AddField(panel.wingLine, "TOPLEFT", "BOTTOMLEFT", -2, PANEL_W, "GameFontNormalSmall")
+panel.pills:SetJustifyH("CENTER")
 
 -- Lockout tooltip for every raid's pill row, keyed by difficultyModel. Raids
 -- with no model field use independent. The lock glyph marks a committed-out
@@ -545,6 +1115,14 @@ RR.LockoutTipByModel = {
 RR.LockoutTipByModel.sizes            = RR.LockoutTipByModel.independent
 RR.LockoutTipByModel.sizesHeroic      = RR.LockoutTipByModel.shared
 RR.LockoutTipByModel.sizesShared      = RR.LockoutTipByModel.shared
+-- Dungeons: one wording for both appearance shapes. Normal 5-mans never
+-- save an instance, so only Heroic and Mythic pill.
+RR.LockoutTipByModel.dungeon = {
+    label = RR.L["Dungeon lockouts"],
+    gloss = RR.L["Heroic resets daily, Mythic weekly. Normal never locks."],
+}
+RR.LockoutTipByModel.dungeonBinary = RR.LockoutTipByModel.dungeon
+RR.LockoutTipByModel.dungeonTiered = RR.LockoutTipByModel.dungeon
 function RR:GetLockoutTooltipInfo(model)
     return self.LockoutTipByModel[model or "independent"]
 end
@@ -572,13 +1150,26 @@ panel.pillsHover:SetScript("OnLeave", function()
     GameTooltip:Hide()
 end)
 
-panel.progress  = AddField(panel.pills, "TOPLEFT", "BOTTOMLEFT", -6,  BODY_WIDTH, "GameFontNormal")
+-- Body content resumes at the left margin. The pills row above it is
+-- CENTERED in a full-width FontString, so chaining TOPLEFT off it would
+-- inherit the panel's edge as the left column and drag every field below
+-- -- prompt, travel pane, encounter block, list -- out past the frame.
+-- Vertical from the pills, horizontal from the panel.
+panel.progress  = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+panel.progress:SetPoint("TOP",  panel.pills, "BOTTOM", 0, -6)
+panel.progress:SetPoint("LEFT", panel, "LEFT", PAD_LEFT, 0)
+panel.progress:SetWidth(BODY_WIDTH)
+panel.progress:SetJustifyH("LEFT")
 panel.next      = AddField(panel.progress, "TOPLEFT", "BOTTOMLEFT", -8,  BODY_WIDTH, "GameFontNormal")
 -- Run-complete exit shortcut. Sits below panel.next with a slightly
 -- larger gap than the usual -8/-12 so there's a little breathing room
 -- under the "Run complete!" banner. Smaller font than the banner (see
 -- targets table). Only populated when the loaded raid authors an exitNote.
 panel.exitNote  = AddField(panel.next,     "TOPLEFT", "BOTTOMLEFT", -13, BODY_WIDTH, "GameFontNormalSmall")
+-- A boss the route never visits, and what is still owed there. Its own
+-- field: it is a separate thought from the exit shortcut above it, and
+-- one FontString would run the two sentences together.
+panel.exitNoteExtra = AddField(panel.exitNote, "TOPLEFT", "BOTTOMLEFT", -8, BODY_WIDTH, "GameFontNormalSmall")
 -- Skip-run comeback line, shown between the banner and the exit note. Its
 -- own field so the exit note stays the bottom of the block.
 panel.skipReturn = AddField(panel.next,    "TOPLEFT", "BOTTOMLEFT", -13, BODY_WIDTH, "GameFontNormalSmall")
@@ -592,7 +1183,7 @@ panel.travel    = AddField(panel.next,     "TOPLEFT", "BOTTOMLEFT", -12, BODY_WI
 -- .achievements and .specialLoot (hyperlink-enabled Frames). Splitting the
 -- toggle target from the hyperlink targets avoids click competition.
 panel.encounter = CreateFrame("Frame", nil, panel)
-panel.encounter:SetPoint("TOPLEFT", panel.travel, "BOTTOMLEFT", 0, -8)
+panel.encounter:SetPoint("TOPLEFT", panel.travel, "BOTTOMLEFT", 0, -UI.PANEL_SECTION_GAP)
 panel.encounter:SetSize(BODY_WIDTH, 14)
 
 -- Header sub-widget: the toggle target.
@@ -655,7 +1246,7 @@ panel.encounter.skip:Hide()
 
 -- Achievements sub-widget: hyperlinks-only, no toggle.
 panel.encounter.achievements = CreateFrame("Frame", nil, panel.encounter)
-panel.encounter.achievements:SetPoint("TOPLEFT", panel.encounter.header, "BOTTOMLEFT", 0, -4)
+panel.encounter.achievements:SetPoint("TOPLEFT", panel.encounter.header, "BOTTOMLEFT", 0, -UI.PANEL_SECTION_GAP)
 panel.encounter.achievements:SetSize(BODY_WIDTH, 1)
 panel.encounter.achievements.label = panel.encounter.achievements:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 panel.encounter.achievements.label:SetPoint("TOPLEFT", 0, 0)
@@ -678,7 +1269,7 @@ end)
 
 -- Special loot sub-widget: hyperlinks-only, no toggle.
 panel.encounter.specialLoot = CreateFrame("Frame", nil, panel.encounter)
-panel.encounter.specialLoot:SetPoint("TOPLEFT", panel.encounter.achievements, "BOTTOMLEFT", 0, -4)
+panel.encounter.specialLoot:SetPoint("TOPLEFT", panel.encounter.achievements, "BOTTOMLEFT", 0, -UI.PANEL_SECTION_GAP)
 panel.encounter.specialLoot:SetSize(BODY_WIDTH, 1)
 panel.encounter.specialLoot.label = panel.encounter.specialLoot:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 panel.encounter.specialLoot.label:SetPoint("TOPLEFT", 0, 0)
@@ -744,7 +1335,7 @@ local function ScheduleTmogHide()
     end)
 end
 
-panel.transmog:SetPoint("TOPLEFT", panel.encounter, "BOTTOMLEFT", 0, -8)
+panel.transmog:SetPoint("TOPLEFT", panel.encounter, "BOTTOMLEFT", 0, -UI.PANEL_SECTION_GAP)
 panel.transmog:SetSize(BODY_WIDTH, 14)
 -- The summary line is click-only: clicking toggles the browser popup open/closed.
 -- We deliberately do NOT open on hover -- the dropdowns make that behavior
@@ -763,12 +1354,7 @@ panel.transmog:SetScript("OnClick", function()
     -- current boss's stats; clicking it and getting a different boss's
     -- loot would be surprising. The /rr tmog command, by contrast,
     -- preserves the last-browsed selection.
-    if RR.currentRaid and RR.state.activeStep then
-        browserState.instanceKind = "raid"
-        browserState.expansion = RR.currentRaid.expansion
-        browserState.raidKey   = RR.currentRaid.instanceID
-        browserState.bossIndex = RR.state.activeStep.bossIndex
-    end
+    UI.PointBrowserAtCurrentInstance()
     UI.ToggleTransmogBrowser()
 end)
 panel.transmog.label = panel.transmog:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -904,22 +1490,24 @@ local function ReleaseEntranceButtons()
     wipe(panel.entranceButtons)
 end
 
-local function PositionEntranceButton(btn, parentFS)
+local function PositionEntranceButton(btn, parentFS, inset)
     local fontSize = RR:GetSetting("fontSize", 12)
     -- Taxi icon at 1.4x the toggle-button size. Anchored at a fixed left inset
     -- on the pill-row FontString so every plane lands in one vertical column.
     local size = math.floor(fontSize * 1.4)
     btn:SetSize(size, size)
     btn:ClearAllPoints()
-    -- +17 = the 16px sub-line indent + 1px into the plane gutter.
-    btn:SetPoint("LEFT", parentFS, "LEFT", 17, 0)
+    -- +17 = the 16px sub-line indent + 1px into the plane gutter. A wing
+    -- row passes its own inset, which lands its plane under the first
+    -- letter of the heading above it.
+    btn:SetPoint("LEFT", parentFS, "LEFT", inset or 17, 0)
 end
 
 -- Frameless toast: a single FontString fade-in/hold/fade-out near
 -- the clicked button. Used to confirm silent waypoint paths
 -- (Blizzard/TomTom) where nothing else in the panel acknowledges
 -- the click. Drives alpha manually via C_Timer.NewTicker.
-local function ShowWaypointToast(anchorFrame, text, rowFS)
+local function ShowWaypointToast(anchorFrame, text, rowFS, rowRight, openRight)
     if not anchorFrame or not text then return end
 
     local toast = CreateFrame("Frame", nil, UIParent)
@@ -935,11 +1523,22 @@ local function ShowWaypointToast(anchorFrame, text, rowFS)
         -- difficulty pill. Their plane sits in the left gutter, where a
         -- leftward toast clips off-screen with the panel near the left
         -- edge of the display. Width follows the text so the toast ends
-        -- with the message.
+        -- with the message. rowRight is where the row's content actually
+        -- ends: a dungeon row's pills live in their own cell past the
+        -- name, so the name's width lands the toast on top of them.
         fs:SetJustifyH("LEFT")
         fs:SetPoint("LEFT", toast, "LEFT", 0, 0)
         toast:SetWidth(math.max(1, fs:GetStringWidth()))
-        toast:SetPoint("LEFT", rowFS, "LEFT", rowFS:GetStringWidth() + 10, 0)
+        toast:SetPoint("LEFT", rowFS, "LEFT",
+            (rowRight or rowFS:GetStringWidth() or 0) + 10, 0)
+    elseif openRight then
+        -- A button sitting at the END of a line of prose has no room to its
+        -- left -- a leftward toast lands on top of the sentence. Open away
+        -- from the text instead.
+        fs:SetJustifyH("LEFT")
+        fs:SetPoint("LEFT", toast, "LEFT", 0, 0)
+        toast:SetWidth(math.max(1, fs:GetStringWidth()))
+        toast:SetPoint("LEFT", anchorFrame, "RIGHT", 6, 0)
     else
         -- Everywhere else the toast opens LEFTWARD off the clicked button,
         -- which has open space on that side.
@@ -985,9 +1584,10 @@ end
 -- the function is reachable as panel.ShowNavChooser.
 do
     local navChooser  -- the singleton frame, lazily created
-    -- rowFS is the idle-list pill row the plane belongs to. It anchors the
-    -- toast past the row's last difficulty pill.
-    function panel.ShowNavChooser(anchorFrame, raid, rowFS)
+    -- rowFS is the idle-list pill row the plane belongs to, rowRight the
+    -- offset from its left edge where the row's content ends. Together they
+    -- anchor the toast past the row's last difficulty pill.
+    function panel.ShowNavChooser(anchorFrame, raid, rowFS, rowRight)
         if not anchorFrame or not raid then return end
 
         -- Waypoints cannot be placed from inside an instance, so say so
@@ -995,7 +1595,8 @@ do
         -- travel plane uses. The run-complete panel shows the idle list
         -- while the player is still zoned in, so its planes land here.
         if IsInInstance and IsInInstance() then
-            ShowWaypointToast(anchorFrame, RR.L["Zone out first"], rowFS)
+            ShowWaypointToast(anchorFrame, RR.L["Zone out first"], rowFS,
+                rowRight)
             return
         end
 
@@ -1006,7 +1607,8 @@ do
         if raid.lfrWings == nil then
             local result = RR:NavigateToEntrance(raid)
             if result and not result.planner then
-                ShowWaypointToast(anchorFrame, RR.L["Waypoint set"], rowFS)
+                ShowWaypointToast(anchorFrame, RR.L["Waypoint set"], rowFS,
+                    rowRight)
             end
             return
         end
@@ -1169,6 +1771,9 @@ end
 panel.idleListLines        = {}
 panel.idleListLegendLines  = {}
 panel.idleListLinePool     = {}
+-- Dungeon rows' pill column: a second cell per row at a shared x-offset.
+panel.idlePillCells        = {}
+panel.idlePillCellPool     = {}
 
 -- Divider above the idle-list legend block. Created once, repositioned and
 -- shown per refresh. The line is a white alpha-mask tinted in code, with
@@ -1194,6 +1799,20 @@ if panel.legendDividerGem.SetTexelSnappingBias then
 end
 panel.legendDividerGem:Hide()
 
+-- Divider under the title wordmark. Same line texture and pink as the
+-- legend divider, lighter and gemless -- it separates the header from the
+-- body rather than heading a section of its own. Width and placement come
+-- from the wordmark at layout time, since both follow the title font.
+panel.titleDivider = panel:CreateTexture(nil, "ARTWORK")
+panel.titleDivider:SetTexture("Interface\\AddOns\\RetroRuns\\Media\\divider-line")
+panel.titleDivider:SetVertexColor(C_PINK[1], C_PINK[2], C_PINK[3], 0.55)
+panel.titleDivider:SetHeight(6)
+if panel.titleDivider.SetTexelSnappingBias then
+    panel.titleDivider:SetTexelSnappingBias(0)
+    panel.titleDivider:SetSnapToPixelGrid(false)
+end
+panel.titleDivider:Hide()
+
 -- Acquire a FontString for the next line. Caller is responsible for
 -- ClearAllPoints() + SetText() + SetPoint() + Show().
 local function AcquireIdleListLine()
@@ -1203,6 +1822,29 @@ local function AcquireIdleListLine()
     fs:SetJustifyH("LEFT")
     fs:SetWidth(BODY_WIDTH)
     return fs
+end
+
+-- Second cell on a dungeon row, holding its lockout pills at a fixed
+-- x-offset so the pill column is straight across every row. Cross-row
+-- alignment is a widget-layout problem, never a string-padding one --
+-- padding inside one FontString lands each row within a pixel or two of
+-- the last and reads crooked at every font size.
+function UI.AcquireIdlePillCell()
+    local cell = table.remove(panel.idlePillCellPool)
+    if cell then return cell end
+    cell = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    cell:SetJustifyH("LEFT")
+    return cell
+end
+
+function UI.ReleaseIdlePillCells()
+    for _, cell in ipairs(panel.idlePillCells) do
+        cell:Hide()
+        cell:ClearAllPoints()
+        cell:SetText("")
+        table.insert(panel.idlePillCellPool, cell)
+    end
+    wipe(panel.idlePillCells)
 end
 
 -- Return all currently-active line FontStrings to the pool. Hides them
@@ -1221,6 +1863,7 @@ local function ReleaseIdleListLines()
     -- Belongs to the rows just released; a stale value would inflate the
     -- next height reserve for a list that no longer has those gaps.
     panel._idleListExtraGapPx = 0
+    panel._idleLegendRows = 0
     for _, fs in ipairs(panel.idleListLegendLines) do
         fs:Hide()
         fs:ClearAllPoints()
@@ -1259,6 +1902,96 @@ local function ReleaseProgressListLines()
         table.insert(panel.progressListLinePool, fs)
     end
     wipe(panel.progressListLines)
+    -- The hover regions anchor to these lines, so they die with them --
+    -- here rather than at each teardown site, which is how a pool of
+    -- overlays drifts out of step with the rows it covers.
+    UI.ReleaseProgressHoverFrames()
+end
+
+-- Hover regions for checklist rows carrying an advisory. FontStrings take
+-- no mouse scripts, so such a row gets an invisible mouse-enabled frame on
+-- top, pooled in lockstep with the line FontStrings. Only rows that have
+-- something to say get one, so the rest of the list stays inert.
+panel.progressHoverFrames    = {}
+panel.progressHoverFramePool = {}
+
+function UI.AcquireProgressHoverFrame()
+    local hoverFrame = table.remove(panel.progressHoverFramePool)
+    if hoverFrame then return hoverFrame end
+    hoverFrame = CreateFrame("Frame", nil, panel)
+    hoverFrame:SetFrameLevel((panel:GetFrameLevel() or 0) + 8)
+    hoverFrame:EnableMouse(true)
+    -- Same mouseover band the pill rows use: with checklist rows two
+    -- points apart, the band says which row the tooltip belongs to.
+    local highlight = hoverFrame:CreateTexture(nil, "HIGHLIGHT")
+    highlight:SetAllPoints()
+    highlight:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+    highlight:SetBlendMode("ADD")
+    highlight:SetAlpha(0.4)
+    hoverFrame:SetScript("OnEnter", function(self)
+        if not self._note then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine(UI.CAUTION_GLYPH .. " " .. self._note,
+            UI.CAUTION_R, UI.CAUTION_G, UI.CAUTION_B, true)
+        GameTooltip:Show()
+    end)
+    hoverFrame:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    return hoverFrame
+end
+
+function UI.ReleaseProgressHoverFrames()
+    for _, hoverFrame in ipairs(panel.progressHoverFrames) do
+        hoverFrame:Hide()
+        hoverFrame:ClearAllPoints()
+        hoverFrame._note = nil
+        table.insert(panel.progressHoverFramePool, hoverFrame)
+    end
+    wipe(panel.progressHoverFrames)
+end
+
+-- Lays the per-boss kill checklist under panel.listHeader, which the
+-- caller has already anchored and captioned. Rendered as per-line
+-- FontStrings rather than one multi-line FontString, matching the
+-- idle-list architecture: per-row hover regions anchor to their own line
+-- and cannot drift. panel.list (the legacy multi-line FontString)
+-- stays empty; these own all rendering.
+--
+-- Shared by the routed in-progress view and by an instance with no route
+-- at all -- GetProgressLines needs no active step, falling back to the
+-- journal's boss order and leaving every row unmarked until it is killed.
+function UI.RenderBossProgressList()
+    panel.list:SetText("")
+    ReleaseProgressListLines()
+    local progressFontSize = RR:GetSetting("fontSize", 12)
+    local previousLine
+    local lines, notes = RR:GetProgressLines()
+    for lineNumber, lineText in ipairs(lines) do
+        local fs = AcquireProgressListLine()
+        SetBodyFont(fs, progressFontSize, "")
+        fs:SetText(lineText or "")
+        fs:ClearAllPoints()
+        if previousLine then
+            fs:SetPoint("TOPLEFT", previousLine, "BOTTOMLEFT", 0, -2)
+        else
+            fs:SetPoint("TOPLEFT", panel.listHeader, "BOTTOMLEFT", 0, -8)
+        end
+        fs:Show()
+        table.insert(panel.progressListLines, fs)
+        -- Bounded to the rendered text, not the field width, so the
+        -- highlight band stops where the row's name stops.
+        local note = notes and notes[lineNumber]
+        if note then
+            local hoverFrame = UI.AcquireProgressHoverFrame()
+            hoverFrame._note = note
+            hoverFrame:ClearAllPoints()
+            hoverFrame:SetPoint("TOPLEFT", fs, "TOPLEFT", 0, 0)
+            hoverFrame:SetPoint("BOTTOMRIGHT", fs, "BOTTOMLEFT",
+                fs:GetStringWidth() or 0, 0)
+            hoverFrame:Show()
+            table.insert(panel.progressHoverFrames, hoverFrame)
+        end
+        previousLine = fs
+    end
 end
 
 -- Idle-list pillRow hover regions. FontStrings can't take mouse
@@ -1284,6 +2017,19 @@ panel.wingStrikePool  = {}
 panel.wingToggleButtons    = {}
 panel.wingToggleButtonPool = {}
 
+-- Under-development marker: the client's own alert glyph, and the amber
+-- the toaster arrow uses for "enabled but not live here". Amber rather
+-- than red -- the dungeon works for browsing and travel today, it just
+-- has no route yet. A DialogFrame asset, so it carries no icon border
+-- and needs no texcoord crop.
+-- Caution glyph and its amber, shared by every advisory line a row's
+-- tooltip can carry. The under-development marker is one of them.
+UI.CAUTION_GLYPH = "|TInterface\\DialogFrame\\UI-Dialog-Icon-AlertNew:12:12|t"
+UI.CAUTION_R, UI.CAUTION_G, UI.CAUTION_B = 1.00, 0.55, 0.20
+UI.DEV_MARKER_GLYPH = UI.CAUTION_GLYPH
+UI.DEV_MARKER_R, UI.DEV_MARKER_G, UI.DEV_MARKER_B =
+    UI.CAUTION_R, UI.CAUTION_G, UI.CAUTION_B
+
 local function AcquirePillHoverFrame()
     local hoverFrame = table.remove(panel.pillHoverFramePool)
     if hoverFrame then return hoverFrame end
@@ -1293,12 +2039,87 @@ local function AcquirePillHoverFrame()
     -- passive info and must never intercept clicks meant for buttons.
     hoverFrame:SetFrameLevel((panel:GetFrameLevel() or 0) + 8)
     hoverFrame:EnableMouse(true)
+    -- Row highlight on mouseover. With rows one line apart and tooltips
+    -- differing row to row, the band says which row the tooltip is for.
+    -- HIGHLIGHT-layer textures show and hide with the mouse on their own,
+    -- so this needs no script and follows the frame wherever it is placed.
+    local highlight = hoverFrame:CreateTexture(nil, "HIGHLIGHT")
+    highlight:SetAllPoints()
+    highlight:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+    highlight:SetBlendMode("ADD")
+    highlight:SetAlpha(0.4)
     hoverFrame:SetScript("OnEnter", function(self)
-        local tipInfo = RR:GetLockoutTooltipInfo(self._lockoutModel)
-        if not tipInfo then return end
+        -- Only ask when this frame actually carries a model:
+        -- GetLockoutTooltipInfo defaults a nil model to "independent", so
+        -- asking with nil hands back a lockout gloss for a row that has
+        -- nothing to do with lockouts (the Timewalking marker).
+        local tipInfo = self._lockoutModel
+            and RR:GetLockoutTooltipInfo(self._lockoutModel) or nil
+        if not tipInfo and not self._underDevelopment
+            and not self._timewalking and not self._seasonal then
+            return
+        end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine(tipInfo.label, 1, 1, 1, true)
-        GameTooltip:AddLine(tipInfo.gloss, 0.8, 0.8, 0.8, true)
+        -- Timewalking rows carry no lockout model, so this is the whole
+        -- tooltip there rather than a line above one.
+        if self._timewalking then
+            local days, month, day, hour, minute = RR:GetTimewalkingEnd()
+            local line = RR.L["Timewalking"]
+            if month and day then
+                -- The client's own date formatter where it exists, so the
+                -- order suits the locale rather than being hardcoded.
+                local when = (FormatShortDate and FormatShortDate(day, month))
+                    or ("%d/%d"):format(month, day)
+                if hour then
+                    -- The event closes mid-morning, not at midnight, so the
+                    -- hour is the difference between "today" and "gone".
+                    when = ("%s %s"):format(when,
+                        (GameTime_GetFormattedTime
+                         and GameTime_GetFormattedTime(hour, minute or 0, true))
+                        or ("%02d:%02d"):format(hour, minute or 0))
+                end
+                line = (RR.L["Timewalking until %s"]):format(when)
+            end
+            GameTooltip:AddLine(line, 1, 1, 1, true)
+            if days then
+                local r, g, b = 0.4, 0.9, 0.45
+                if days <= UI.TIMEWALKING_DAYS_LAST then
+                    r, g, b = 0.95, 0.35, 0.35
+                elseif days <= UI.TIMEWALKING_DAYS_SOON then
+                    r, g, b = 1.00, 0.82, 0.20
+                end
+                GameTooltip:AddLine(
+                    (RR.L["%d day(s) remaining"]):format(days), r, g, b, true)
+            end
+        end
+        -- The seasonal note takes the slot the Timewalking block takes on
+        -- a TW row. The two are not expected to coincide -- a dungeon in
+        -- the live Mythic+ pool is not usually the Timewalking week -- but
+        -- both render if one ever does.
+        if self._seasonal then
+            if self._timewalking then
+                GameTooltip:AddLine(" ")
+            end
+            GameTooltip:AddLine(
+                UI.CAUTION_GLYPH .. " " .. RR.L["Seasonal M+ Dungeon"],
+                UI.CAUTION_R, UI.CAUTION_G, UI.CAUTION_B, true)
+        end
+        -- Why the row reads gray. Leads, because that is what the pointer
+        -- is asking about; the lockout gloss under it describes the pills.
+        if self._underDevelopment then
+            -- A breath between it and any block above, when there is one;
+            -- alone it stays the top line.
+            if self._timewalking or self._seasonal then
+                GameTooltip:AddLine(" ")
+            end
+            GameTooltip:AddLine(
+                UI.DEV_MARKER_GLYPH .. " " .. RR.L["UNDER DEVELOPMENT"],
+                UI.DEV_MARKER_R, UI.DEV_MARKER_G, UI.DEV_MARKER_B, true)
+        end
+        if tipInfo then
+            GameTooltip:AddLine(tipInfo.label, 1, 1, 1, true)
+            GameTooltip:AddLine(tipInfo.gloss, 0.8, 0.8, 0.8, true)
+        end
         GameTooltip:Show()
     end)
     hoverFrame:SetScript("OnLeave", function()
@@ -1530,6 +2351,43 @@ do
     toastStatus.arrow:SetVertexColor(0.95, 0.35, 0.35)
 end
 
+-- The footer's center slot, second occupant: how many instances this account
+-- has entered against the hourly cap, plus how long until the oldest slot
+-- frees. Shares the slot with the Toaster arrow and takes it whenever the
+-- panel is showing the instance list -- the arrow can only read "not in a
+-- supported raid" there, while the cap is exactly what decides whether the
+-- next run on that list can start. The count is every instance, raids
+-- included, because the game's cap is.
+panel.instanceLimit = CreateFrame("Frame", nil, panel)
+panel.instanceLimit:SetSize(160, 14)
+panel.instanceLimit:SetPoint("BOTTOM", 0, 8 + FRAME_INSET_Y)
+do
+    local instanceLimit = panel.instanceLimit
+    instanceLimit.label = instanceLimit:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    SafeSetFont(instanceLimit.label, BODY_FONT, 10, "")
+    instanceLimit.label:SetText(RR.L["Instance Limit:"])
+    instanceLimit.label:SetTextColor(0.62, 0.62, 0.62)
+
+    instanceLimit.value = instanceLimit:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    SafeSetFont(instanceLimit.value, BODY_FONT, 10, "")
+
+    -- Center the label+value pair as a group, the way the Toaster pair does.
+    -- Called on every repaint because the value's width changes with the
+    -- count and the minutes.
+    instanceLimit.Layout = function()
+        local labelWidth = instanceLimit.label:GetStringWidth() or 0
+        local valueWidth = instanceLimit.value:GetStringWidth() or 0
+        local gap = 4
+        local total = labelWidth + gap + valueWidth
+        instanceLimit.label:ClearAllPoints()
+        instanceLimit.label:SetPoint("BOTTOMLEFT", instanceLimit, "BOTTOM", -total / 2, 0)
+        instanceLimit.value:ClearAllPoints()
+        instanceLimit.value:SetPoint("BOTTOMLEFT", instanceLimit.label, "BOTTOMRIGHT", gap, 0)
+        instanceLimit:SetWidth(total + 8)
+    end
+    instanceLimit:Hide()
+end
+
 -- Action button row: Map, Tmog, Achieves, Skips, Settings, evenly distributed
 -- across the panel width above the credit/version row. Map is the primary
 -- in-raid action; Tmog/Achieves/Skips are reference views; Settings is config.
@@ -1540,7 +2398,10 @@ local BUTTON_H   = 28
 local BUTTON_GAP = 14
 local TOTAL_W    = BUTTON_W * 5 + BUTTON_GAP * 4
 local START_X    = math.floor((PANEL_W - TOTAL_W) / 2)
-local BUTTON_Y   = 30 + FRAME_INSET_Y   -- pixels up from the panel's bottom edge (incl. frame inset)
+local BUTTON_Y   = 26 + FRAME_INSET_Y   -- pixels up from the panel's bottom edge (incl. frame inset).
+                                        -- The hover footnote sits above the row, so this also sets its
+                                        -- clearance from the content above; the credit row below tops
+                                        -- out near y=20, leaving ~6px under the buttons.
 
 -- Shared one-line footnote shown above the hovered button. A single
 -- FontString reused by all five buttons: OnEnter re-anchors it above that
@@ -1581,7 +2442,16 @@ end
 
 panel.mapBtn = MakeActionButton("Map", RR.L["Map"], "MapIcon.tga",
     START_X,
-    function() RR:ShowCurrentMapForStep() end)
+    -- Second click closes, matching the other action buttons.
+    -- ShowCurrentMapForStep stays show-only: it targets a specific uiMap and
+    -- is the open half, not a toggle.
+    function()
+        if WorldMapFrame and WorldMapFrame:IsShown() then
+            ToggleWorldMap()
+        else
+            RR:ShowCurrentMapForStep()
+        end
+    end)
 
 panel.achievesBtn = MakeActionButton("Achieves", RR.L["Achieves"], "TrophyIcon.tga",
     START_X + (BUTTON_W + BUTTON_GAP) * 1,
@@ -1591,8 +2461,10 @@ panel.achievesBtn = MakeActionButton("Achieves", RR.L["Achieves"], "TrophyIcon.t
         -- than the last-browsed selection). Out of a raid, fall through
         -- to the preserved last-browsed state. Mirrors the tmog button.
         if RR.currentRaid then
+            achState.instanceKind = (RR.currentRaid.kind == "dungeon")
+                and "dungeon" or "raid"
             achState.expansion = RR.currentRaid.expansion
-            achState.raidKey   = RR.currentRaid.instanceID
+            achState.raidKey   = UI.BrowserKeyOf(RR.currentRaid)
         end
         UI.ToggleAchievementsWindow()
     end)
@@ -1605,14 +2477,7 @@ panel.tmogBtn = MakeActionButton("Tmog", RR.L["Tmog"], "HangerIcon.tga",
         -- current boss before opening (so the user sees their actual
         -- context rather than the last-browsed selection). Out of a
         -- raid, fall through to the preserved last-browsed state.
-        if RR.currentRaid then
-            browserState.instanceKind = "raid"
-            browserState.expansion = RR.currentRaid.expansion
-            browserState.raidKey   = RR.currentRaid.instanceID
-            if RR.state and RR.state.activeStep then
-                browserState.bossIndex = RR.state.activeStep.bossIndex
-            end
-        end
+        UI.PointBrowserAtCurrentInstance()
         UI.ToggleTransmogBrowser()
     end)
 
@@ -1647,6 +2512,15 @@ UI.POPUP_DESIGN_W            = 440  -- transmog popup width floor: the layout's
 UI.POPUP_MAX_W               = 700  -- transmog popup width ceiling: rows wider
                                     -- than this wrap instead of growing the
                                     -- frame further
+
+-- Attention flash, shared by the transmog search-jump band and the
+-- achievements current-boss band: a bright tinted band that holds, then
+-- fades to nothing. A persistent marker (scroll position there, the
+-- accent bar here) carries the location after the band is gone.
+UI.FLASH_BAND_R, UI.FLASH_BAND_G, UI.FLASH_BAND_B = 0.30, 0.80, 1.00
+UI.FLASH_BAND_ALPHA    = 0.28
+UI.FLASH_FADE_DELAY    = 1.5
+UI.FLASH_FADE_DURATION = 3.5
 
 
 -- Sets a FontString's effective font + text safely and forces layout so
@@ -1690,6 +2564,7 @@ function UI.ApplySettings()
         { panel.progress,   14, "OUTLINE", true },
         { panel.next,       14, "OUTLINE", true },
         { panel.exitNote,   11, "",        true },
+        { panel.exitNoteExtra, 11, "",     true },
         { panel.skipReturn, 11, "",        true },
         { panel.skipNote,    9, "",        true },
         { panel.travel,     12, "",        true },
@@ -1870,10 +2745,9 @@ local function GetBodyAndFooterElements()
     local list = {
         panel.raid, panel.wingLine, panel.pills, panel.progress, panel.next,
         panel.travel, panel.encounter, panel.transmog,
-        panel.exitNote, panel.skipReturn, panel.skipNote,
+        panel.exitNote, panel.exitNoteExtra, panel.skipReturn, panel.skipNote,
         panel.listHeader, panel.list,
         panel.credit, panel.version, panel.whatsNewLabel,
-        panel.toastStatus,
         panel.mapBtn, panel.tmogBtn, panel.achievesBtn,
         panel.skipsBtn, panel.settingsBtn,
         panel.actionFootnote,
@@ -1889,8 +2763,23 @@ local function ApplyBodyVisibility(visible)
             if visible then fs:Show() else fs:Hide() end
         end
     end
+
+    -- The footer's center slot has two occupants sharing one anchor -- the
+    -- Toaster arrow and the instance counter -- so exactly one may ever be
+    -- shown. They are deliberately NOT in the inventory above: it shows
+    -- everything it holds, which drew both on top of each other. Visibility
+    -- for the pair belongs to UI.RefreshFooterStatus alone.
+    if visible then
+        if UI.RefreshFooterStatus then UI.RefreshFooterStatus() end
+    else
+        if panel.toastStatus   then panel.toastStatus:Hide()   end
+        if panel.instanceLimit then panel.instanceLimit:Hide() end
+    end
     for _, fs in ipairs(panel.idleListLines or {}) do
         if visible then fs:Show() else fs:Hide() end
+    end
+    for _, cell in ipairs(panel.idlePillCells or {}) do
+        if visible then cell:Show() else cell:Hide() end
     end
     for _, fs in ipairs(panel.idleListLegendLines or {}) do
         if visible then fs:Show() else fs:Hide() end
@@ -1921,6 +2810,12 @@ local function ApplyBodyVisibility(visible)
     end
     if panel.pillsHover then
         if visible then panel.pillsHover:Show() else panel.pillsHover:Hide() end
+    end
+    -- Hide-only: the idle-mode toggle line belongs to the plain-idle
+    -- branch of UI.Update, which is the only code that shows it.
+    -- Re-showing it here would leak it into non-idle states.
+    if panel.idleModeLine and not visible then
+        panel.idleModeLine.SetShown(false)
     end
 end
 
@@ -1986,10 +2881,11 @@ local function ComputeMinimizedPanelW()
         if not runsW or runsW <= 0 then return nil end
     end
     -- Layout from the panel right edge for the text rows:
-    --   close + minimize buttons occupy ~57px inside the right edge (the close
-    --   button clears the curved corner at 12px, the minimize button sits to
-    --   its left), and a 12px gap keeps the text clear of them.
-    local rightSideWidth   = 57
+    --   close + minimize + search buttons occupy ~82px inside the right edge
+    --   (the close button clears the curved corner at 12px, the minimize and
+    --   search buttons continue leftward at 30-unit centers), and a 12px gap
+    --   keeps the text clear of them.
+    local rightSideWidth   = 82
     local titleToButtonGap = 12
     if panel.titleMinNote and panel.titleMinNote:IsShown() then
         -- Route-active bar: the wider of two constraints. String widths are
@@ -2082,7 +2978,10 @@ local function ApplyTitleLayoutForState(minimized)
                     and RR:ActiveRouteSkippedOptionalBoss()) then
                 completeBanner = RR.L["|cff00ff00Skip Run Complete!|r"]
             else
-                completeBanner = RR.L["|cff00ff00Raid Complete!|r"]
+                -- Neutral wording: the bar reads the same on a raid and
+                -- on a dungeon, and matches the main panel's banner for
+                -- the same event. The two branches above are raid-only.
+                completeBanner = RR.L["|cff00ff00Run complete!|r"]
             end
             minNote = "|cfff259c7" .. RR.L["Exit:"] .. "|r "
                 .. (RR.GetActiveMinExitNote and RR:GetActiveMinExitNote() or "")
@@ -2175,9 +3074,17 @@ local function ApplyTitleLayoutForState(minimized)
         -- Center the minimize button on the close button's CENTER so the two sit
         -- at exactly the same height. Both are 24px frames; the x-offset tucks
         -- them together with a small gap. Buttons anchor to the bar's vertical
-        -- center (RIGHT = mid-height).
+        -- center (RIGHT = mid-height). The search shortcut continues the row
+        -- leftward at the same spacing, minimized-bar only.
         panel.minimizeButton:ClearAllPoints()
         panel.minimizeButton:SetPoint("CENTER", panel.closeButton, "CENTER", -30, 0)
+        panel.searchButton:SetScale(titleScale)
+        panel.searchButton:ClearAllPoints()
+        panel.searchButton:SetPoint("CENTER", panel.minimizeButton, "CENTER", -30, 0)
+        panel.searchButton:Show()
+        panel.idleSearchButton:Hide()
+        -- The bar has no body to divide off.
+        panel.titleDivider:Hide()
     else
         -- Expanded panel: same compact scale as the minimized bar, and the
         -- title row placed at the SAME distance from the top border as the
@@ -2205,9 +3112,63 @@ local function ApplyTitleLayoutForState(minimized)
         panel.closeButton:SetPoint("RIGHT", panel, "TOPRIGHT", (-22) / titleScale, expandedRowCenterY / titleScale)
         panel.minimizeButton:ClearAllPoints()
         panel.minimizeButton:SetPoint("CENTER", panel.closeButton, "CENTER", -30, 0)
-        -- Title: left-anchored, vertical center matched to the button row center.
+        panel.searchButton:Hide()
+        panel.idleSearchButton:SetScale(titleScale)
+        panel.idleSearchButton:ClearAllPoints()
+        -- Dropped 2px, the same compensation the browser and achievements
+        -- glasses carry: UI-Searchbox-Icon's glyph sits high in its box, so
+        -- a true CENTER against the square close/minimize art reads high and
+        -- crowds the top border.
+        panel.idleSearchButton:SetPoint("CENTER", panel.minimizeButton,
+            "CENTER", -30, -2)
+        -- Hidden while a run is being guided. The glass changes what it
+        -- searches with the panel's state -- appearances inside a loaded
+        -- instance, the instance list otherwise -- and one button with two
+        -- targets is a coin flip for the player. It returns as soon as the
+        -- panel is showing the instance list again.
+        if UI.IsShowingInstanceList() then
+            panel.idleSearchButton:Show()
+        else
+            panel.idleSearchButton:Hide()
+            if UI.CloseIdleSearch then UI.CloseIdleSearch() end
+        end
+        -- Title: centered on the panel, vertical center matched to the
+        -- button row center. RETRO and RUNS are two chained FontStrings,
+        -- so the pair is measured and the head placed half the run to the
+        -- left of center. Offsets are in the anchored string's own scaled
+        -- space, hence the divisions.
         panel.titleRetro:ClearAllPoints()
-        panel.titleRetro:SetPoint("LEFT", panel, "TOPLEFT", PAD_LEFT / titleScale, expandedRowCenterY / titleScale)
+        local wordmarkWidth = (panel.titleRetro:GetStringWidth() or 0)
+            + (panel.titleRuns:GetStringWidth() or 0)
+        local titleLeft = (PANEL_W / titleScale - wordmarkWidth) / 2
+        -- The pixel wordmark's glyph box sits high in its line, so it
+        -- reads as hugging the top border on the shared row center. Drop
+        -- it a couple of pixels; the buttons keep the true center.
+        local titleDrop = 3
+        -- Never let a long localized wordmark run under the button
+        -- cluster; fall back to the old left margin instead.
+        if titleLeft < PAD_LEFT / titleScale then
+            titleLeft = PAD_LEFT / titleScale
+        end
+        panel.titleRetro:SetPoint("LEFT", panel, "TOPLEFT", titleLeft,
+            (expandedRowCenterY - titleDrop) / titleScale)
+
+        -- Divider tucked under the wordmark, overhanging it by about a
+        -- fifth of its width at each end so it reads as underlining the
+        -- title rather than boxing it.
+        -- Everything here is PANEL space: the wordmark's own width and
+        -- height are in its scaled space, so both are multiplied up, and
+        -- the divider anchors to the panel rather than to the scaled
+        -- title -- an offset against a scaled anchor is measured in that
+        -- anchor's space and drifts as the scale changes.
+        local wordmarkHeight = (panel.titleRetro:GetStringHeight() or 12)
+            * titleScale
+        panel.titleDivider:ClearAllPoints()
+        panel.titleDivider:SetWidth(math.max(1,
+            math.ceil(wordmarkWidth * titleScale * 1.55)))
+        panel.titleDivider:SetPoint("CENTER", panel, "TOPLEFT", PANEL_W / 2,
+            expandedRowCenterY - titleDrop - wordmarkHeight / 2 - 3)
+        panel.titleDivider:Show()
     end
 end
 
@@ -2235,31 +3196,12 @@ function UI.ApplyMinimizedState()
         local heightChanged = math.abs(newH - oldH) > 0.5
         local widthChanged  = math.abs(newW - oldW) > 0.5
         -- Geometry writes are skipped mid-drag (see the OnDragStart note).
+        -- The panel is anchored TOPLEFT, so shrinking it holds that corner
+        -- with no re-anchor and nothing to persist: the saved anchor stays
+        -- the user's drag, whatever size the panel happens to be.
         if (heightChanged or widthChanged) and not panel.isBeingDragged then
-            local oldTop  = panel:GetTop()
-            local oldLeft = panel:GetLeft()
-            local fscale  = panel:GetEffectiveScale()
-            local pscale  = UIParent:GetEffectiveScale()
-            local pcx, pcy = UIParent:GetCenter()
             if heightChanged then panel:SetHeight(newH) end
             if widthChanged  then panel:SetWidth(newW)  end
-            if oldTop and oldLeft and pcx and pcy then
-                -- New CENTER offsets holding the old top and left edges, from
-                --   top  = center.y + height/2
-                --   left = center.x - width/2
-                local newCenterY = oldTop  - (newH / 2)
-                local newCenterX = oldLeft + (newW / 2)
-                -- Convert from panel-local screen pixels back to the
-                -- ANCHORED frame's scaled coord system that SetPoint
-                -- offsets use (NOT UIParent's, per Wowpedia "UI scaling")
-                -- by dividing by fscale, not pscale.
-                local y = (newCenterY * fscale - pcy * pscale) / fscale
-                local x = (newCenterX * fscale - pcx * pscale) / fscale
-                panel:ClearAllPoints()
-                panel:SetPoint("CENTER", UIParent, "CENTER", x, y)
-                RR:SetSetting("panelX", math.floor(x + 0.5))
-                RR:SetSetting("panelY", math.floor(y + 0.5))
-            end
         end
         -- If both dimensions are already at minimized values (steady-
         -- state per-heartbeat call after minimize completed), skip
@@ -2269,23 +3211,10 @@ function UI.ApplyMinimizedState()
         -- rightward from its current left edge rather than from center.
         local oldW = panel:GetWidth() or PANEL_W
         -- Geometry writes are skipped mid-drag (see the OnDragStart note).
+        -- TOPLEFT-anchored: growing back to full width extends rightward
+        -- from the pinned corner on its own.
         if math.abs(PANEL_W - oldW) > 0.5 and not panel.isBeingDragged then
-            local oldLeft = panel:GetLeft()
-            local fscale  = panel:GetEffectiveScale()
-            local pscale  = UIParent:GetEffectiveScale()
-            local pcx, _  = UIParent:GetCenter()
             panel:SetWidth(PANEL_W)
-            if oldLeft and pcx then
-                local newCenterX = oldLeft + (PANEL_W / 2)
-                local x = (newCenterX * fscale - pcx * pscale) / fscale
-                -- Re-apply X anchor; preserve Y by reading current Y
-                -- offset from settings (AutoSize will overwrite Y next
-                -- via its own TOP-pin path).
-                local y = RR:GetSetting("panelY", 0)
-                panel:ClearAllPoints()
-                panel:SetPoint("CENTER", UIParent, "CENTER", x, y)
-                RR:SetSetting("panelX", math.floor(x + 0.5))
-            end
         end
         -- Falling through to AutoSize handles the maximize-side height
         -- resize. AutoSize does the same TOP-PIN math when the height
@@ -2298,6 +3227,9 @@ end
 -- flip so idle-state visibility is re-asserted -- otherwise elements that
 -- should stay hidden flicker until the next heartbeat.
 function UI.SetMinimized(value)
+    -- A state flip re-anchors the search under the other glass; close it
+    -- rather than leaving a box tied to a hidden button.
+    if UI.CloseIdleSearch then UI.CloseIdleSearch() end
     RR:SetSetting("minimized", value and true or false)
     UI.Update()
 end
@@ -2335,9 +3267,12 @@ end)
 -- Resizes the main panel (and ancillary frames) to fit their current
 -- content. Safe to call at any time; idempotent.
 function UI.AutoSize()
-    -- When minimized, the panel uses a fixed height set in
-    -- Minimized mode pins height to a fixed value via ApplyMinimizedState.
-    if UI.IsMinimized() then return end
+    -- While minimized the panel's height is pinned by ApplyMinimizedState,
+    -- so the panel resize below is skipped -- but not the transmog-popup
+    -- sizing at the bottom: the minimized bar's search button opens the
+    -- browser with the panel still minimized, and an early return here
+    -- left that window unsized, colliding content with its legend footer.
+    local panelHeightPinned = UI.IsMinimized()
 
     -- Bottom of the layout is whichever pool is non-empty -- in-raid
     -- boss-progress lines, or idle supported-raids list.
@@ -2373,10 +3308,11 @@ function UI.AutoSize()
     end
 
     -- Skip the panel resize/re-anchor entirely while the panel is being
-    -- dragged (see the OnDragStart note); the drag-stop handler re-runs
-    -- the layout pass. The transmog-popup sizing below is unaffected --
-    -- it never writes panel geometry.
-    if hasContent and not panel.isBeingDragged then
+    -- dragged (see the OnDragStart note) or minimized; the drag-stop
+    -- handler and ApplyMinimizedState re-run the layout pass. The
+    -- transmog-popup sizing below is unaffected -- it never writes panel
+    -- geometry.
+    if hasContent and not panel.isBeingDragged and not panelHeightPinned then
         -- Footer reserve: the action button row, plus the legend block in
         -- idle mode. Measured from LEGEND_BOTTOM_OFFSET, not the button-row
         -- top -- the gap between them is what the list would overlap into.
@@ -2393,17 +3329,46 @@ function UI.AutoSize()
             -- between and a cushion above the topmost.
             local LEGEND_BOTTOM_OFFSET = BUTTON_Y + BUTTON_H + 12  -- BUTTON_Y includes frame inset
             local LEGEND_INTER_GAP     = 4
-            local LEGEND_TOP_CUSHION   = 36  -- gap between last pill row and legend (holds the divider)
-            local legendLineHeight     = GetBodyFontSize(10) + 4
-            -- Reserve for the legend rows actually present (1-3) rather than a
+            -- Band between the last row and the legend, holding the
+            -- divider. The RENDERED band measures ~10px wider than this:
+            -- the reserve rounds the legend up to whole rows while the
+            -- block itself renders shorter, and the slack lands above it.
+            -- Tuned against the measured band, not the nominal one.
+            -- FLOOR: must exceed the divider gem's 14px height, or the gem
+            -- has nowhere to sit. idle_layout_harness pins that.
+            local LEGEND_TOP_CUSHION   = 16
+            -- The entrance row carries the plane glyph at the same size as
+            -- the real plane buttons (1.4x the BODY font), which is taller
+            -- than a legend-font line and stretches that FontString. Reserve
+            -- the larger of the two, or the block overruns its band -- by
+            -- more the further up the font slider goes.
+            local legendLineHeight     = math.max(
+                GetBodyFontSize(10) + 4,
+                math.floor(RR:GetSetting("fontSize", 12) * 1.4))
+            -- Reserve for the legend rows actually present (0-3) rather than a
             -- fixed worst-case 3 -- reserving 3 when fewer show left a big empty
             -- band above the footer in the idle view.
-            local legendRows           = #(panel.idleListLegendLines or {})
-            if legendRows < 1 then legendRows = 1 end
+            -- Counted per rendered row, not per FontString: the entrance rows
+            -- carry a label and a value string each, and counting strings
+            -- reserved a phantom third row on the dungeon list.
+            local legendRows           = panel._idleLegendRows
+                                         or #(panel.idleListLegendLines or {})
             if legendRows > 3 then legendRows = 3 end
-            local legendBlockHeight    = legendRows * legendLineHeight
-                                       + math.max(0, legendRows - 1) * LEGEND_INTER_GAP
-            footerReserve = LEGEND_BOTTOM_OFFSET + legendBlockHeight + LEGEND_TOP_CUSHION
+            if legendRows < 1 then
+                -- NOTHING renders down there: the collapsed expansion list
+                -- carries neither a skip nor an entrance legend. The old
+                -- floor of 1 reserved a row and its cushion for a block that
+                -- never drew, which is the empty band between the last
+                -- expansion and the action buttons. PositionLegendDivider is
+                -- already guarded on the same count, so no divider is being
+                -- reserved for either.
+                footerReserve = LEGEND_BOTTOM_OFFSET
+            else
+                local legendBlockHeight = legendRows * legendLineHeight
+                                        + math.max(0, legendRows - 1) * LEGEND_INTER_GAP
+                footerReserve = LEGEND_BOTTOM_OFFSET + legendBlockHeight
+                                + LEGEND_TOP_CUSHION
+            end
         end
 
         local parentTop      = panel:GetTop()
@@ -2418,35 +3383,36 @@ function UI.AutoSize()
             local screenH        = UIParent:GetHeight() or 900
             local maxH           = (screenH * 0.9) / scale
             local minH           = 240
-            local newH           = math.max(minH, math.min(maxH, desired))
+            -- Rounded, and only applied past a full pixel of change. The
+            -- height feeds back into itself: `desired` is measured from
+            -- panel:GetTop() minus a child's GetBottom(), so the panel's own
+            -- height is an input to the height it asks for. With sub-pixel
+            -- error it never settles, and the center moves half a pixel on
+            -- every layout pass. Integer heights plus a 1px deadband stop it;
+            -- a genuine 1px difference is not worth a re-anchor anyway.
+            local newH = math.max(minH, math.min(maxH, desired))
+            newH = math.floor(newH + 0.5)
 
-            -- Captured BEFORE SetHeight: that moves the center immediately,
-            -- so a later GetCenter() returns the shifted value and X drifts.
-            local oldTop  = panel:GetTop()
-            local oldH    = panel:GetHeight() or newH
-            local fscale  = panel:GetEffectiveScale()
-            local pscale  = UIParent:GetEffectiveScale()
-            local _, pcy  = UIParent:GetCenter()
-            panel:SetHeight(newH)
-            if oldTop and oldH and pcy and math.abs(newH - oldH) > 0.5 then
-                -- Top-pin: the CENTER-anchor Y that holds the top edge. X
-                -- reuses the saved value rather than GetCenter(), which would
-                -- accumulate error across repeated resizes. Offsets are in the
-                -- anchored frame's scaled space, so divide by fscale.
-                local newCenterY = oldTop - (newH / 2)  -- panel scale
-                local y = (newCenterY * fscale - pcy * pscale) / fscale
-                local x = RR:GetSetting("panelX", 0)
-                panel:ClearAllPoints()
-                panel:SetPoint("CENTER", UIParent, "CENTER", x, y)
-                RR:SetSetting("panelY", math.floor(y + 0.5))
+            local oldH = panel:GetHeight() or newH
+            if math.abs(newH - oldH) < 1.5 then
+                newH = oldH or newH
+            else
+                panel:SetHeight(newH)
             end
+            -- No re-anchor: a TOPLEFT-anchored frame grows downward from a
+            -- fixed top edge, which is exactly what the old CENTER maths
+            -- was reconstructing by hand -- and what fed the height back
+            -- into itself as an oscillation.
         end
     end
 
     -- Now that the panel height (and thus the bottom-pinned legend's screen
     -- position) is final, place the divider at the midpoint between the last
-    -- raid row and the legend top. Guarded internally for the no-legend case.
-    if PositionLegendDivider then PositionLegendDivider() end
+    -- raid row and the legend top. Guarded internally for the no-legend case;
+    -- skipped while minimized, where the legend is hidden with the body.
+    if PositionLegendDivider and not panelHeightPinned then
+        PositionLegendDivider()
+    end
 
     -- TRANSMOG POPUP -------------------------------------------------------
     -- The scroll CHILD takes the full content height so everything is
@@ -2483,10 +3449,10 @@ function UI.AutoSize()
         local legendH = (tmogWindow.legendLineCount or 2) * popupLineHeight
                         + 8 + 12
 
-        -- Popup chrome: top close-button reserve + dropdown stack (four
-        -- dropdowns anchored BOTTOMLEFT +4 overlap by 4px each, so 4*32-12=116)
+        -- Popup chrome: top close-button reserve + dropdown stack (five
+        -- dropdowns anchored BOTTOMLEFT +4 overlap by 4px each, so 5*32-12)
         -- + gap below dropdowns + bottom margin.
-        local chromeTop = 32 + (5 * 32 - 12) + 10   -- above the scroll region (5 dropdowns)
+        local chromeTop = 32 + (5 * 32 - 12) + 10
         local chromeBot = 14                        -- bottom margin under legend
 
         -- Maximum content viewport: whatever the ceiling leaves after chrome
@@ -2574,7 +3540,7 @@ end
 -- Display helpers
 -------------------------------------------------------------------------------
 
-local C_ORANGE = "ff7f00"
+local C_ORANGE = RR.C_ORANGE
 
 local function OrangeText(text)
     return "|cff" .. C_ORANGE .. text .. "|r"
@@ -2893,6 +3859,21 @@ function RR:GetRingPulseRed()
     return RING_PULSE_REDS[encounterPulsePhase] or 1.0
 end
 
+-- {skip} becomes a magenta [Skip] link on an optional boss and plain text
+-- otherwise, so a line never advertises a control the player has no way to
+-- use. Shared by the travel note and the encounter line. On the UI table
+-- rather than a local: this file is at the 200-local ceiling.
+function UI.ApplySkipToken(text, step)
+    if not text or not text:find("{skip}", 1, true) then return text end
+    local word = RR.L["Skip"]
+    if step and step.optional then
+        -- Bracketed like the header control, so the word reads as the same
+        -- button rather than emphasis.
+        word = ("|Hrrskip:%d|h|cffF259C7[%s]|r|h"):format(step.bossIndex or 0, word)
+    end
+    return (text:gsub("{skip}", word))
+end
+
 local function BuildTravelText(step)
     local prefix = ("|cff%s%s|r "):format(C_LABEL, RR.L["Traveling:"])
     if not step then return prefix .. "N/A" end
@@ -2913,10 +3894,11 @@ local function BuildTravelText(step)
         local seg = RR:PickNoteSeg(step, mapID)
         local note = RR:ResolveSegNote(seg, "note")
         if note then
-            return prefix .. HighlightNames(RR.L[note])
+            return prefix .. UI.ApplySkipToken(HighlightNames(RR.L[note]), step)
         end
         if step.travelText then
-            return prefix .. HighlightNames(RR.L[step.travelText])
+            return prefix
+                .. UI.ApplySkipToken(HighlightNames(RR.L[step.travelText]), step)
         end
         return prefix .. "|cff888888" .. RR.L["Open the map and select a section to see directions."] .. "|r"
     end
@@ -2974,8 +3956,10 @@ local function BuildAchievementsBlock(boss)
         -- Keep the section visible so every boss pane has the same
         -- shape; the row is clickable and opens the achievements
         -- window like a real achievement link would.
-        return ("|cff%s%s|r\n|Hrrachui|h|cff888888%s|r|h"):format(
-            C_LABEL, RR.L["Achievements:"], RR.L["None"])
+        -- On the label's own line: a one-word answer does not earn a
+        -- wrap, and the block reads as a single statement.
+        return ("|cff%s%s|r |Hrrachui|h|cff888888%s|r|h"):format(
+            C_LABEL, RR.L["Achievements:"], RR.L["N/A"])
     end
     local lines = { ("|cff%s%s|r"):format(C_LABEL, RR.L["Achievements:"]) }
 
@@ -3058,20 +4042,7 @@ local function BuildEncounterText(step)
         headerPulsing = true
     else
         local tip = RR.L[(boss and boss.soloTip) or step.soloTip or ""]
-        tip = HighlightNames(tip)
-        -- {skip} becomes a magenta link on an optional boss and plain text
-        -- otherwise, so a tip never advertises a control the player has no
-        -- way to use.
-        if tip:find("{skip}", 1, true) then
-            local word = RR.L["Skip"]
-            if step.optional then
-                -- Bracketed like the header control, so the word reads as
-                -- the same button rather than emphasis.
-                word = ("|Hrrskip:%d|h|cffF259C7[%s]|r|h")
-                    :format(step.bossIndex or 0, word)
-            end
-            tip = tip:gsub("{skip}", word)
-        end
+        tip = UI.ApplySkipToken(HighlightNames(tip), step)
         headerLine = prefix .. tip
         clickable  = true
     end
@@ -3105,7 +4076,7 @@ local TRANSMOG_EXCLUDED_SLOTS = {
 -- LFR, then the Wrath sizes (10/25 x Normal/Heroic), then Normal, Heroic,
 -- Mythic. The two families never appear on the same item, so only the
 -- within-family order shows.
-local DIFF_ORDER  = { 17, 3, 4, 5, 6, 14, 15, 16 }
+local DIFF_ORDER  = { 17, 3, 4, 5, 6, 14, 15, 16, 24, 33 }
 local DIFF_LETTER = {
     [17] = "LFR",
     [3]  = "10N",
@@ -3115,6 +4086,11 @@ local DIFF_LETTER = {
     [14] = "N",
     [15] = "H",
     [16] = "M",
+    -- Timewalking buckets (24 dungeon, 33 raid). Browser-only: the panel
+    -- and idle pill builders keep their own label maps without these, so
+    -- no lockout or progress pill ever shows a TW column.
+    [24] = "TW",
+    [33] = "TW",
 }
 
 -- Full names used in the "Current difficulty: <name>" header line. The
@@ -3193,6 +4169,17 @@ local function HasAppearanceViaAnySource(appearanceID)
         end
     end
     return false
+end
+
+-- Account-wide "does the player already own this look", by source: the
+-- source's own state counts, and so does any sibling source sharing the
+-- appearance. On the UI table for the map overlay's collected-rare filter.
+function UI.IsSourceLookCollected(sourceID)
+    if HasSource(sourceID) then return true end
+    local info = C_TransmogCollection
+        and C_TransmogCollection.GetAppearanceInfoBySource
+        and C_TransmogCollection.GetAppearanceInfoBySource(sourceID)
+    return HasAppearanceViaAnySource(info and info.appearanceID)
 end
 
 -- Returns the appearance ID (visual ID) for an item by its itemID.
@@ -3519,9 +4506,8 @@ local function SpecialCollectionStateForItem(item)
         if not item.questID then return "missing" end
         local fn = (C_QuestLog and C_QuestLog.IsQuestFlaggedCompleted)
                    or IsQuestFlaggedCompleted
-        if not fn then return "missing" end
-        local ok, completed = pcall(fn, item.questID)
-        return (ok and completed) and "collected" or "missing"
+        if not fn or not item.questID then return "missing" end
+        return fn(item.questID) and "collected" or "missing"
 
     elseif item.kind == "illusion" then
         -- Weapon-enchant illusions are tracked by sourceID (not itemID).
@@ -3530,8 +4516,8 @@ local function SpecialCollectionStateForItem(item)
         if not C_TransmogCollection or not C_TransmogCollection.GetIllusions then
             return "missing"
         end
-        local ok, list = pcall(C_TransmogCollection.GetIllusions)
-        if not ok or type(list) ~= "table" then return "missing" end
+        local list = C_TransmogCollection.GetIllusions()
+        if type(list) ~= "table" then return "missing" end
         for _, info in ipairs(list) do
             if info.sourceID == item.sourceID then
                 return info.isCollected and "collected" or "missing"
@@ -3551,9 +4537,9 @@ local function SpecialCollectionStateForItem(item)
         local decorID = item.decorID
         if not decorID then return "missing" end
 
-        local ok, info = pcall(
-            C_HousingCatalog.GetCatalogEntryInfoByRecordID, 1, decorID, true)
-        if not ok or not info then return "missing" end
+        local info = C_HousingCatalog.GetCatalogEntryInfoByRecordID(
+            1, decorID, true)
+        if not info then return "missing" end
 
         local quantity            = info.quantity or 0
         local remainingRedeemable = info.remainingRedeemable or 0
@@ -3606,7 +4592,7 @@ BuildSpecialLootSection = function(boss)
             local held  = 0
             local ingredientHeld = {}  -- [idx] = boolean
             for idx, ing in ipairs(item.barter.ingredients) do
-                local count = GetItemCount(ing.id, false) or 0
+                local count = C_Item.GetItemCount(ing.id, false) or 0
                 local has   = count > 0
                 ingredientHeld[idx] = has
                 if has then held = held + 1 end
@@ -3629,7 +4615,7 @@ BuildSpecialLootSection = function(boss)
             end
 
             local kindColor  = SPECIAL_KIND_COLOR[item.kind] or "ffaaaaaa"
-            local _, itemLink = GetItemInfo(item.id)
+            local _, itemLink = C_Item.GetItemInfo(item.id)
             local display    = itemLink or item.name or (RR.L["Item "]..tostring(item.id))
 
             table.insert(lines,
@@ -3644,7 +4630,7 @@ BuildSpecialLootSection = function(boss)
                 local has = ingredientHeld[idx]
                 local ingColor = has and SPECIAL_COLLECTED  or SPECIAL_UNCOLLECTED
                 local ingGlyph = has and SPECIAL_GLYPH_COLLECTED or SPECIAL_GLYPH_UNCOLLECTED
-                local _, ingLink = GetItemInfo(ing.id)
+                local _, ingLink = C_Item.GetItemInfo(ing.id)
                 local ingDisplay = ingLink or ing.name or (RR.L["Item "]..tostring(ing.id))
                 local ingSuffix  = has and RR.L["in bags"] or RR.L["not in bags"]
                 table.insert(lines,
@@ -3673,7 +4659,7 @@ BuildSpecialLootSection = function(boss)
             -- GetItemInfo is async -- if it returns nil, fall back to the
             -- schema's name field and a plain-text display. The 1s UI
             -- heartbeat will re-render once the cache warms up.
-            local _, itemLink = GetItemInfo(item.id)
+            local _, itemLink = C_Item.GetItemInfo(item.id)
             local display = itemLink or item.name or (RR.L["Item "]..tostring(item.id))
 
             local kindLabel = SPECIAL_KIND_LABEL[item.kind] or item.kind or "?"
@@ -3721,10 +4707,10 @@ end
 -- "show all" is on), and `equipClasses` for armor-class restrictions, filtered
 -- the same way but driving no tier label.
 --
--- The active filter is a class ID, 0 for all classes, or nil for the class
--- being played. Deliberately RUNTIME state, never saved: it is a temporary
--- view, and persisting it left every browser on every character stuck on
--- whatever class was picked once.
+-- The active filter is a class ID, 0 for all classes, or nil for whatever
+-- the Default Transmog Filter setting says. Deliberately RUNTIME state, never
+-- saved: it is a temporary view, and persisting it left every browser on
+-- every character stuck on whatever class was picked once.
 local function ActiveClassFilter()
     local _, _, playerClassID = UnitClass("player")
     local sel = browserState.classFilter
@@ -3732,7 +4718,10 @@ local function ActiveClassFilter()
     if type(sel) == "number" and sel >= 1 and sel <= 13 then
         return sel
     end
-    -- Unset / invalid: the class being played.
+    -- Unset / invalid: the Default Transmog Filter setting decides.
+    if RR:GetSetting("tmogDefaultClassFilter", "mine") == "all" then
+        return nil
+    end
     return playerClassID
 end
 
@@ -3811,6 +4800,9 @@ local function ItemIsTransmogCandidate(item, classOverride, includeOtherFaction)
     -- per-difficulty appearance sources, so they must never appear in the
     -- transmog browser regardless of which array they were authored into.
     if item.kind then return false end
+    -- Timewalking-only drops are not walk-in farmable, which is the whole
+    -- premise; they neither display nor count.
+    if item.timewalkingOnly then return false end
     if TRANSMOG_EXCLUDED_SLOTS[item.slot] then return false end
     -- Faction-locked rows (Trial of the Crusader drops per-faction item
     -- variants from the same encounter) can't be looted by this character,
@@ -3838,6 +4830,11 @@ end
 -- folds to its Heroic bucket; under the independent model the id is returned
 -- unchanged. Used to choose the white vs gray dot color in the browser.
 local function ActiveDifficulty()
+    -- "Current difficulty" only means something for the instance the player
+    -- is standing in. While the browser builds another instance's detail,
+    -- this returns nil and every white current-difficulty highlight falls
+    -- through to gray (all consumers already guard nil).
+    if UI._suppressActiveDifficulty then return nil end
     return RR:FoldDifficulty(RR.currentRaid, RR.state and RR.state.currentDifficultyID)
 end
 
@@ -3956,6 +4953,35 @@ end
 -- Returns (needed, shared, total). Only counts items that HAVE a source
 -- for the given difficulty; items with no source for that difficulty
 -- (some raids have fewer variants) are skipped entirely, not counted.
+-- Every sourceID carried on the raid's own boss rows. A trash row whose
+-- sources all live on a boss row too is CROSS-LISTED -- shown in both
+-- places, counted once, on the boss side. SourceID is the key on purpose:
+-- appearance-level folding across rows would collapse genuinely distinct
+-- farmables (the SoO gloves lesson).
+function UI.BossCarriedSourceSet(raid)
+    local carriedSources = {}
+    for _, boss in ipairs((raid and raid.bosses) or {}) do
+        for _, item in ipairs(boss.loot or {}) do
+            for _, sourceID in pairs(item.sources or {}) do
+                carriedSources[sourceID] = true
+            end
+        end
+    end
+    return carriedSources
+end
+
+-- True when the trash row's every source is boss-carried, so the counters
+-- skip it and the boss row keeps the tally.
+function UI.TrashRowIsBossCarried(item, carriedSources)
+    if not item.sources then return false end
+    local sawSource = false
+    for _, sourceID in pairs(item.sources) do
+        sawSource = true
+        if not carriedSources[sourceID] then return false end
+    end
+    return sawSource
+end
+
 local function CountBossLootForDifficulty(boss, diffID, classOverride)
     if not boss or not boss.loot or #boss.loot == 0 then return nil end
     if not diffID then return nil end
@@ -4110,6 +5136,18 @@ local function CountBossLoot(boss)
     return needed, shared, total
 end
 
+-- Appearances from ONE boss this character has yet to collect, across
+-- every difficulty the row carries. Exposed on RR so the exit note can
+-- say how much is still owed at a boss the route does not visit.
+--
+-- Nil when the boss offers this character nothing countable at all -- the
+-- class filter or an equip gate leaving no candidate. That is not the same
+-- as owning every appearance, and a caller must not report it as such.
+function RR:BossAppearancesStillNeeded(boss)
+    return (CountBossLoot(boss))
+end
+
+
 -- Formats (needed, shared) as "Missing (N) Shared (N)", green at 0 and orange
 -- above. Both zero returns a single green "Complete" token instead.
 local function FormatStatsFragment(needed, shared)
@@ -4151,6 +5189,15 @@ function UI.BuildTransmogSummaryUncached(step)
     local header   = ("|cff%s%s|r %s"):format(
         C_LABEL, RR.L["Transmog Needed:"], clickHnt)
     local activeID = ActiveDifficulty()
+
+    -- A boss that drops nothing with an appearance KEEPS its section and
+    -- says so, rather than disappearing and leaving the panel to close up
+    -- around a slot the player expects to find. No browse hint on this
+    -- one: there is nothing on the other side of the click.
+    if not boss.loot or #boss.loot == 0 then
+        return ("|cff%s%s|r %s"):format(C_LABEL, RR.L["Transmog Needed:"],
+            "|cff9d9d9d" .. RR.L["None available"] .. "|r")
+    end
 
     -- Buckets to summarize come from the raid's difficulty model, not a
     -- fixed list, so era-specific bucket IDs (Cataclysm's 3/4/5/6) are
@@ -4271,6 +5318,16 @@ end
 -- difficulties (3/4/5/6) and span more than one of them: a single
 -- appearance dropping on several sizes. On the UI table rather than a
 -- file-level local (the chunk is at Lua's local ceiling).
+-- A row carrying a Timewalking bucket must render the per-difficulty
+-- letter strip even when its sources fold to one appearance (they nearly
+-- always do -- TW drops are reprints), or the TW pill never appears: the
+-- binary shape would swallow it. The Dreambinder fold, deliberately
+-- bypassed.
+function UI.HasTimewalkingBucket(item)
+    return item and item.sources
+        and (item.sources[24] ~= nil or item.sources[33] ~= nil) or false
+end
+
 function UI.IsMergedSizeDifficultyRow(item)
     if not item or not item.sources then return false end
     local bucketCount = 0
@@ -4461,25 +5518,16 @@ local function BuildPerDiffRow(item)
         .. "|cff777777 ]|r"
 end
 
--- Rows whose look can be traded up at a vendor carry a second appearance
--- that no difficulty drops, so it takes a pill of its own after the drop
--- pills instead of a difficulty key. Texture escapes ignore |c coloring,
--- so the arrow is tinted through the extended markup's RGB arguments --
--- the same route the gold shared-checkmark takes.
--- Both live on the UI table rather than as file-level locals: UI.lua's
--- main chunk sits at Lua 5.1's 200-local ceiling.
+-- Texture escapes ignore |c coloring, so chain dots are tinted through the
+-- extended markup's RGB arguments -- the same route the gold
+-- shared-checkmark takes. Lives on the UI table rather than as a file-level
+-- local: UI.lua's main chunk sits at Lua 5.1's 200-local ceiling.
 UI.UPGRADE_PILL_RGB = {
     [DOT_COLLECTED] = "0:255:0",
     [DOT_SHARED]    = "191:144:0",
     [DOT_ACTIVE]    = "255:255:255",
     [DOT_INACTIVE]  = "136:136:136",
 }
--- Single source for the arrow escape so the pill and the legend that
--- explains it can never drift apart.
-function UI.UpgradeArrowGlyph(color)
-    return ("|TInterface\\AddOns\\RetroRuns\\Media\\ArrowUp:10:10:0:0:64:64:0:64:0:64:%s|t")
-        :format(UI.UPGRADE_PILL_RGB[color] or UI.UPGRADE_PILL_RGB[DOT_INACTIVE])
-end
 -- Spec icons for a tier piece, so a player can see which loot spec the
 -- token will actually hand them -- a piece serving one spec needs a
 -- respec before the token is consumed, one serving all of them does not.
@@ -4513,6 +5561,18 @@ function UI.ProgressDotGlyph(color)
     return ("|TInterface\\AddOns\\RetroRuns\\Media\\StatusDot:10:10:0:0:64:64:0:64:0:64:%s|t")
         :format(UI.UPGRADE_PILL_RGB[color] or UI.UPGRADE_PILL_RGB[DOT_INACTIVE])
 end
+-- The faction-pair caption's words: the two faction names, the viewing
+-- player's own first. The dots and the '=' are placed by the layout pass,
+-- which is the only place the bracket and separator widths of a real row's
+-- indicator can be measured. Returns nil when the client cannot name them.
+function UI.FactionPairLegendText()
+    local faction  = UnitFactionGroup and UnitFactionGroup("player")
+    local nearName = (faction == "Horde") and FACTION_HORDE or FACTION_ALLIANCE
+    local farName  = (faction == "Horde") and FACTION_ALLIANCE or FACTION_HORDE
+    if not (nearName and farName) then return nil end
+    return ("|cff888888" .. RR.L["%s & %s"] .. "|r"):format(nearName, farName)
+end
+
 -- Maps a source's collection state to its pill color. `activeFor` is the
 -- difficulty at which the step becomes obtainable, so an out-of-reach step
 -- reads gray rather than white.
@@ -4548,55 +5608,23 @@ function UI.BuildUpgradeRow(item)
         local chainSep = "|cff555555 || |r"
         return "|cff777777[ |r" .. table.concat(dots, chainSep) .. "|cff777777 ]|r"
     end
-    -- Base pill: the drop, folded to one state the way binary rows are.
-    local baseState = RR.BinaryFoldedState(item)
-    local baseColor = DOT_ACTIVE
-    if baseState == "collected" then
-        baseColor = DOT_COLLECTED
-    elseif baseState == "shared" then
-        baseColor = DOT_SHARED
+    -- Two-step chain, same dots as everywhere else: the drop folded to one
+    -- state, then the vendor upgrade with its own collection state.
+    -- The drop dot is white only while the difficulty being run drops
+    -- it, gray otherwise -- the same rule a faction-pair half follows.
+    local steps = {
+        UI.MirrorHalfDotColor(
+            UI.MirrorHalfState(RR.BinaryFoldedState(item), item.sources)),
+        UI.ChainStepColor(
+            CollectionStateForSource(upgrade.source, item.id),
+            upgrade.difficulty),
+    }
+    local dots = {}
+    for _, color in ipairs(steps) do
+        table.insert(dots, UI.ProgressDotGlyph(color))
     end
-    -- The base is one appearance however many difficulties list it, so the
-    -- letters only earn their place when WHICH difficulty matters. Icecrown
-    -- needs them (the token drops at 25N, 10H and 25H but not 10N, and 10H
-    -- is a far easier run than 25H); Firelands trash drops the same look at
-    -- both of its difficulties, so `collapseBase` folds it to the plain
-    -- binary glyph every other single-appearance row uses.
-    local baseCells = {}
-    if item.upgrade.collapseBase then
-        local glyphColor, glyph = BinaryStateRendering(baseState)
-        table.insert(baseCells, ("|c%s%s|r"):format(glyphColor, glyph))
-    else
-        local activeDiff = ActiveDifficulty()
-        for _, diffID in ipairs(DIFF_ORDER) do
-            if item.sources and item.sources[diffID] then
-                local color = baseColor
-                -- Nothing collected yet: the difficulty being run highlights.
-                if baseState ~= "collected" and baseState ~= "shared" then
-                    color = (diffID == activeDiff) and DOT_ACTIVE or DOT_INACTIVE
-                end
-                table.insert(baseCells,
-                    ("|c%s%s|r"):format(color, DIFF_LETTER[diffID] or "?"))
-            end
-        end
-    end
-
-    -- Upgrade pill: its own appearance, and its own collection state.
-    local upgradeState = CollectionStateForSource(upgrade.source, item.id)
-    local upgradeColor
-    if upgradeState == "collected" then
-        upgradeColor = DOT_COLLECTED
-    elseif upgradeState == "shared" then
-        upgradeColor = DOT_SHARED
-    elseif upgrade.difficulty and ActiveDifficulty() == upgrade.difficulty then
-        upgradeColor = DOT_ACTIVE
-    else
-        upgradeColor = DOT_INACTIVE
-    end
-    table.insert(baseCells, UI.UpgradeArrowGlyph(upgradeColor))
-
     local sep = "|cff555555 || |r"
-    return "|cff777777[ |r" .. table.concat(baseCells, sep) .. "|cff777777 ]|r"
+    return "|cff777777[ |r" .. table.concat(dots, sep) .. "|cff777777 ]|r"
 end
 
 -- A faction pair renders as two dots, the viewing player's faction first,
@@ -4718,7 +5746,11 @@ local function BuildDotRow(item)
         return UI.BuildUpgradeRow(item)
     elseif item.mirror then
         return UI.BuildMirrorRow(item)
-    elseif ItemShape(item) == "binary" then
+    elseif ItemShape(item) == "binary"
+        and not UI.HasTimewalkingBucket(item) then
+        -- TW reprints share their base row's appearance, so shape folds
+        -- them to binary -- which would swallow the TW pill. Same bypass
+        -- as the partition; the per-diff renderer draws [ N | TW ].
         return BuildBinaryRow(item)
     else
         return BuildPerDiffRow(item)
@@ -4744,6 +5776,13 @@ UI.DIVIDER_BELOW   = 4     -- cushion under it
 UI.TMOG_MARGIN_L     = 22  -- body and legend text, left edge
 UI.TMOG_LEGEND_PAD_R = 14  -- legend text, right edge
 UI.TMOG_RULE_INSET   = 28  -- both edges, every horizontal rule (= scrollbar width)
+-- The faction-pair caption spaces its two dots with a spacer texture where
+-- a real row has the text " | ". Measured widths get the two within a pixel
+-- or two, but an inline texture and a run of glyphs do not carry the same
+-- side bearing, and nothing measurable accounts for the rest. Eyeballed
+-- against the rows above at font size 12; nudge it if a very different
+-- body size ever drifts them apart again.
+UI.PAIRKEY_DOT_NUDGE = 2
 
 -- One divider: two line halves, two gems and a label. The titled form sets
 -- a gem either side of the words; the plain form centers one gem on an
@@ -4794,8 +5833,10 @@ end
 -- `leftX` shifts the rule right of the content column's own left edge, so it
 -- can inset equally from both frame edges even though the column does not.
 function UI.PlaceListDivider(divider, anchor, topY, leftX, width, rowH,
-                             labelText, labelW)
+                             labelText, labelW, subtle)
     local y      = topY - UI.DIVIDER_ABOVE
+    divider.left:SetAlpha(1)
+    divider.right:SetAlpha(1)
     local lineY  = y - math.floor((rowH - UI.DIVIDER_LINE_H) / 2)
     -- Gems stand taller than the line, so they hang evenly above and below it.
     local gemY   = lineY
@@ -4831,6 +5872,20 @@ function UI.PlaceListDivider(divider, anchor, topY, leftX, width, rowH,
         divider.label:SetPoint("TOPLEFT", anchor, "TOPLEFT", labelX, y)
         divider.label:SetText(labelText)
         divider.label:Show()
+    elseif subtle then
+        -- A quiet rule: a short centered line, dimmed, and no gem. It marks
+        -- a break without reading as another titled section.
+        local shortW = math.max(1, math.floor(width * 0.45))
+        divider.left:ClearAllPoints()
+        divider.left:SetPoint("TOPLEFT", anchor, "TOPLEFT",
+            leftX + math.floor((width - shortW) / 2), lineY)
+        divider.left:SetWidth(shortW)
+        divider.left:SetAlpha(0.35)
+        divider.left:Show()
+        divider.right:Hide()
+        divider.label:Hide()
+        divider.gemLeft:Hide()
+        divider.gemRight:Hide()
     else
         divider.left:SetWidth(math.max(1, width))
         divider.left:Show()
@@ -4840,6 +5895,14 @@ function UI.PlaceListDivider(divider, anchor, topY, leftX, width, rowH,
         divider.gemLeft:ClearAllPoints()
         divider.gemLeft:SetPoint("CENTER", divider.left, "CENTER", 0, 0)
         divider.gemLeft:Show()
+    end
+    if subtle then
+        -- Height actually consumed: the drop to the rule, the rule itself,
+        -- then the cushion under it. Returning only the two cushions left
+        -- the next element sitting on top of the line.
+        return UI.DIVIDER_ABOVE
+            + math.floor((rowH - UI.DIVIDER_LINE_H) / 2)
+            + UI.DIVIDER_LINE_H + UI.DIVIDER_BELOW
     end
     return UI.DIVIDER_ABOVE + rowH + UI.DIVIDER_BELOW
 end
@@ -4894,12 +5957,52 @@ end
 -- chunk sits at Lua 5.1's 200-local ceiling.
 function UI.ItemLinkFor(itemID)
     if not itemID then return "" end
-    local _, itemLink = GetItemInfo(itemID)
+    local _, itemLink = C_Item.GetItemInfo(itemID)
     if itemLink then return itemLink end
-    return ("|cffa335ee[%s]|r"):format(GetItemInfo(itemID) or RR.L["(item)"])
+    return ("|cffa335ee[%s]|r"):format(C_Item.GetItemInfo(itemID) or RR.L["(item)"])
 end
 
 local function BuildSanctumLine(raid, boss)
+    -- Legacy-wing hint. Belongs to the INSTANCE rather than a boss, so it
+    -- resolves ahead of the boss guard below. Its block emits the sanctum
+    -- marker row, which is what places this line and its travel plane.
+    --
+    -- The destination rides its own last line rather than sitting inline
+    -- where the prose names it: the paragraph wraps, and a wrapped
+    -- FontString cannot report where any line but the last one ends, so an
+    -- inline plane would land at the unwrapped width -- far off the right
+    -- edge. Same shape the omnitoken hint uses for the same reason.
+    if raid and raid.legacyNote and raid.legacyNote.text then
+        local note = raid.legacyNote
+        -- HighlightNames so ^caret^ spans render as names rather than
+        -- showing their literal carets, the same as any authored note.
+        local body = RR.L[note.text]
+        if note.itemID then
+            body = body:gsub("{item}", UI.ItemLinkFor(note.itemID))
+        end
+        if note.itemID2 then
+            body = body:gsub("{item2}", UI.ItemLinkFor(note.itemID2))
+        end
+        if note.emphasis then
+            local phrase = RR.L[note.emphasis]
+            body = body:gsub(phrase:gsub("%p", "%%%0"),
+                ("|cff%s%s|r|cff9d9d9d"):format(C_LABEL, phrase), 1)
+        end
+        body = HighlightNames(body)
+        local travel = note.travel
+        if not (travel and travel.mapID and travel.x and travel.y) then
+            return ("|cff9d9d9d%s|r"):format(body), raid, nil, nil, "legacy", nil
+        end
+        local placeLine = (RR.L["|cff888888  -> |r|cffffffff%s|r|cff888888 -- |r|cffffffff%s|r"])
+            :format(RR.L[travel.vendorName or ""], RR.L[travel.zoneSub or ""])
+        return ("|cff9d9d9d%s|r\n%s"):format(body, placeLine), raid, nil, nil,
+            "legacy", {
+                buttonOnLastLine = true,
+                buttonLineText   = placeLine,
+                travel = { mapID = travel.mapID, x = travel.x, y = travel.y,
+                           vendorName = travel.vendorName, zoneSub = travel.zoneSub },
+            }
+    end
     if not raid or not boss then return nil end
 
     -- Omnitokens: a boss drop that buys ANY tier slot rather than one
@@ -4970,6 +6073,7 @@ local function BuildSanctumLine(raid, boss)
             end
             local hintInfo
             local emittedAnySpot = false
+            local lastSpotHeadingLine = 0
             for _, spot in ipairs(vendorInfo.locations) do
                 -- A spot may name the bosses whose tokens it takes, so a
                 -- boss dropping only one kind of token shows only that
@@ -5009,27 +6113,26 @@ local function BuildSanctumLine(raid, boss)
                 -- link's trailing |r ends the row color early and whatever
                 -- follows renders in the default tone.
                 if classSpot.itemID then
-                    local _, itemLink = GetItemInfo(classSpot.itemID)
+                    local _, itemLink = C_Item.GetItemInfo(classSpot.itemID)
                     if not itemLink then
-                        local fallbackName = GetItemInfo(classSpot.itemID)
+                        local fallbackName = C_Item.GetItemInfo(classSpot.itemID)
                             or RR.L["(item)"]
                         itemLink = ("|cffa335ee[%s]|r"):format(fallbackName)
                     end
                     detail = detail:gsub("{item}",
                         "|r" .. itemLink .. "|cffffffff")
                 end
-                -- Every spot after the first gets a blank line, or one
-                -- block's materials run straight into the next spot's
-                -- heading and the two read as one list. Gated on byClass
-                -- once, which left the spots without per-class costs
-                -- (Temple's two weapon turn-ins) crammed against the block
-                -- above them.
-                if emittedAnySpot then
+                -- A spot that follows a block of sub-bullets gets a blank
+                -- line, or that block's materials run straight into the next
+                -- spot's heading and the two read as one list. Plain
+                -- one-line spots stack without the gap.
+                if emittedAnySpot and #lines > lastSpotHeadingLine then
                     table.insert(lines, "")
                 end
                 emittedAnySpot = true
                 table.insert(lines, rowFormat:format(
                     RR.L[spot.place or ""], detail))
+                lastSpotHeadingLine = #lines
                 -- Anchor the travel button to the SPOT'S OWN row, captured
                 -- before any sub-bullets push it up the list -- measuring
                 -- after them would hang the plane off the last material.
@@ -5083,18 +6186,6 @@ local function BuildSanctumLine(raid, boss)
                                 table.concat(matParts, " + ")))
                         end
                     end
-                end
-                -- What the token turns into, for spots whose reward is a
-                -- choice rather than one fixed piece. Named here so the
-                -- rows above can stay untagged.
-                if classSpot.yields and classSpot.yields[1] then
-                    local yieldParts = {}
-                    for _, itemID in ipairs(classSpot.yields) do
-                        table.insert(yieldParts, UI.ItemLinkFor(itemID))
-                    end
-                    table.insert(lines, subFormat:format(
-                        (RR.L["Yields: %s"]):format(
-                            table.concat(yieldParts, ", "))))
                 end
                 -- The plane rides whichever spot a waypoint can reach.
                 if spot.mapID and spot.x and spot.y and not hintInfo then
@@ -5256,14 +6347,25 @@ BuildTransmogDetail = function(stepOrCtx)
     elseif stepOrCtx and stepOrCtx.bossIndex then
         boss = RR:GetBossByIndex(stepOrCtx.bossIndex)
     end
-    if not boss or not boss.loot or #boss.loot == 0 then
+    if not boss then
         return { mainRows = { { kind = "text",
-            text = RR.L["No loot data for this boss."] } } }
+            text = RR.L["This boss doesn't drop any appearances."] } } }
     end
+    -- A boss with no loot still renders the instance-level sections --
+    -- trash, wings, faction gear belong to the dungeon, not to whichever
+    -- boss the dropdown happens to sit on.
+    local bossLoot = boss.loot or {}
 
     -- Reset per-render caches so we pick up collection changes between pops.
     appearanceIDCache = {}
     sourceAppearanceIDCache = {}
+
+    -- Suppress the current-difficulty white highlight while building a
+    -- detail for an instance the player is NOT standing in. Cleared at the
+    -- return below; row text is built inside this function, so the flag's
+    -- scope covers every row.
+    UI._suppressActiveDifficulty = not (RR.currentRaid and RR.currentRaid.bosses
+        and RR.currentRaid.bosses[boss.index] == boss)
 
     -- Rows whose display name collides with another in this boss's loot -- the
     -- paired Warglaives of Azzinoth are the case: one main-hand, one off-hand,
@@ -5276,30 +6378,35 @@ BuildTransmogDetail = function(stepOrCtx)
     -- authored-name scan saw no duplicate and the browser drew the same
     -- row twice.
     local function ShownName(item)
-        local clientName = item.id and GetItemInfo and GetItemInfo(item.id)
+        local clientName = item.id and GetItemInfo and C_Item.GetItemInfo(item.id)
         if clientName and clientName ~= "" then return clientName end
         return item.name
     end
-    local nameSeen, duplicateNames = {}, {}
-    for _, dupItem in ipairs(boss.loot) do
+    -- Same-named siblings, and whether their SLOTS actually differ. A
+    -- difficulty pair (one Normal row, one Heroic row, different item ids,
+    -- one name) shares a slot, so appending it disambiguates nothing and
+    -- just tags every row in the instance with its own slot.
+    local nameSeen, duplicateNames, nameSlots, slotVaries = {}, {}, {}, {}
+    for _, dupItem in ipairs(bossLoot) do
         local shown = ShownName(dupItem)
         if shown then
             if nameSeen[shown] then duplicateNames[shown] = true end
             nameSeen[shown] = true
+            local seenSlot = nameSlots[shown]
+            if seenSlot == nil then
+                nameSlots[shown] = dupItem.slot or false
+            elseif seenSlot ~= (dupItem.slot or false) then
+                slotVaries[shown] = true
+            end
         end
     end
 
-    UI._equipGateExempt = UI.EquipGateExemptFor(boss.loot, ActiveClassFilter())
+    UI._equipGateExempt = UI.EquipGateExemptFor(bossLoot, ActiveClassFilter())
     local candidates = {}
-    for _, item in ipairs(boss.loot) do
+    for _, item in ipairs(bossLoot) do
         if ItemIsTransmogCandidate(item, nil, true) then
             table.insert(candidates, item)
         end
-    end
-
-    if #candidates == 0 then
-        return { mainRows = { { kind = "text",
-            text = RR.L["No transmog data for this boss."] } } }
     end
 
     -- Structured rows, laid into pooled widgets by the browser's layout
@@ -5307,15 +6414,17 @@ BuildTransmogDetail = function(stepOrCtx)
     -- wrapping line), "note" (wrapping sub-line indented to the name
     -- column), "blank" (one-line gap).
     local mainRows = {}
+    if #candidates == 0 then
+        table.insert(mainRows, { kind = "text",
+            text = RR.L["This boss doesn't drop any appearances."] })
+    end
 
-    -- Compact top line: just the player's current difficulty.
+    -- Compact top line: just the player's current difficulty. Resolved here,
+    -- INSERTED at the end of this build: the named-set block prepends its
+    -- rows to position 1, and inserting the line this early left it shoved
+    -- below the set rows on every boss carrying one.
     local activeDiff  = ActiveDifficulty()
     local activeName  = activeDiff and DIFF_NAME[activeDiff]
-    if activeName then
-        table.insert(mainRows, { kind = "text",
-            text = ("|cff888888" .. RR.L["Current difficulty: %s"] .. "|r"):format(activeName) })
-        table.insert(mainRows, { kind = "blank" })
-    end
 
     -- Resolve the player's class name once for the tier annotation.
     -- Normally the popup filters tier items to the player's class, so we
@@ -5329,18 +6438,18 @@ BuildTransmogDetail = function(stepOrCtx)
     end
 
     -- The display name FormatItemCells will render: client-localized once
-    -- the item cache answers, the stored English name on English clients,
-    -- an ellipsis on translated clients until the cache warms.
+    -- the item cache answers, the stored name until it does. A translated
+    -- client used to get an ellipsis here rather than English; the stored
+    -- name reads better than punctuation, measures the column honestly on
+    -- first paint, and the request below shortens the window it shows for.
     local function RowDisplayName(item)
         local displayName = item.name
-        local activeLocale = RR.activeLocaleCode or GetLocale()
-        if activeLocale and activeLocale:sub(1, 2) ~= "en" then
-            displayName = "..."
-        end
         if item.id and GetItemInfo then
-            local clientName = GetItemInfo(item.id)
+            local clientName = C_Item.GetItemInfo(item.id)
             if clientName and clientName ~= "" then
                 displayName = clientName
+            elseif C_Item and C_Item.RequestLoadItemDataByID then
+                C_Item.RequestLoadItemDataByID(item.id)
             end
         end
         return displayName
@@ -5351,7 +6460,7 @@ BuildTransmogDetail = function(stepOrCtx)
     -- FormatItemCells, so the block and the color always agree.
     local function IsLegendaryRow(item)
         local quality = item.id and GetItemInfo
-            and select(3, GetItemInfo(item.id))
+            and select(3, C_Item.GetItemInfo(item.id))
         return quality == 5
     end
 
@@ -5365,14 +6474,27 @@ BuildTransmogDetail = function(stepOrCtx)
     local binaryItems    = {}
     local perDiffItems   = {}
     local hardModeItems  = {}
+    local taggedItems    = {}
+    local setItems       = {}
     local otherFactionItems = {}
     for _, item in ipairs(candidates) do
         if ItemIsOtherFaction(item) then
             table.insert(otherFactionItems, item)
+        elseif item.setName then
+            -- Named-set pieces (Dungeon Set 1) render as their own titled
+            -- block at the top of the loot, where a tier block would sit --
+            -- same intent, its own name.
+            table.insert(setItems, item)
+        elseif item.tag then
+            -- Rows sharing an authored `tag` (King Gordok's Tribute chest)
+            -- render as their own titled section rather than interleaved
+            -- with the boss's ordinary drops.
+            table.insert(taggedItems, item)
         elseif item.hardModeOnly then
             table.insert(hardModeItems, item)
         elseif ItemShape(item) == "binary"
             and not UI.IsMergedSizeDifficultyRow(item)
+            and not UI.HasTimewalkingBucket(item)
             and not item.upgrade then
             -- Merged size-difficulty rows are binary in state but render as
             -- letter strips, so they group with the per-difficulty rows and
@@ -5490,6 +6612,8 @@ BuildTransmogDetail = function(stepOrCtx)
     -- The faction block takes the same ordering, so it reads like the main
     -- list rather than like a differently-sorted appendix.
     table.sort(otherFactionItems, CompareRegularRows)
+    table.sort(taggedItems, CompareRegularRows)
+    table.sort(setItems, CompareRegularRows)
 
     -- Legendaries leave both shape groups and render as their own block
     -- under the regular loot, separated by a blank line. Extraction runs
@@ -5550,7 +6674,7 @@ BuildTransmogDetail = function(stepOrCtx)
                 -- the item cache answers, which is also every trash row today.
                 local qualityEscape = "|cffa335ee"
                 local itemQuality = item.id and GetItemInfo
-                    and select(3, GetItemInfo(item.id))
+                    and select(3, C_Item.GetItemInfo(item.id))
                 local qualityColor = itemQuality and ITEM_QUALITY_COLORS
                     and ITEM_QUALITY_COLORS[itemQuality]
                 if qualityColor and qualityColor.hex then
@@ -5580,7 +6704,7 @@ BuildTransmogDetail = function(stepOrCtx)
             viewHasFactionPair = true
             local mirrorName = item.mirror.name
             if GetItemInfo and item.mirror.id then
-                local clientName = GetItemInfo(item.mirror.id)
+                local clientName = C_Item.GetItemInfo(item.mirror.id)
                 if clientName and clientName ~= "" then
                     mirrorName = clientName
                 end
@@ -5658,7 +6782,7 @@ BuildTransmogDetail = function(stepOrCtx)
             -- a glance, not as a plain drop.
             local nameColor = baseNameColor
             if item.id and GetItemInfo then
-                local quality = select(3, GetItemInfo(item.id))
+                local quality = select(3, C_Item.GetItemInfo(item.id))
                 if quality == 5 then
                     nameColor = "ffff8000"
                 end
@@ -5691,6 +6815,46 @@ BuildTransmogDetail = function(stepOrCtx)
                 end
             end
 
+            -- Acquisition tags. `rareNpc` marks a drop held by one named
+            -- rare spawn rather than the zone's trash pool; `tag` is a
+            -- short authored label for anything else (Dire Maul's Tribute
+            -- chest). Gold, so the tag reads as "special acquisition"
+            -- against the white class parens.
+            if item.rareNpc then
+                -- Label gold, npc name white: color codes do not nest, so
+                -- the name closes gold and reopens it after itself.
+                table.insert(tagParts, ("|cffffd100(%s)|r"):format(
+                    (RR.L["Rare: %s"]):format(
+                        "|cffffffff" .. RR.L[item.rareNpc] .. "|r|cffffd100")))
+            end
+            if item.bossNpc then
+                -- Same shape as the rare tag: label gold, name white. Color
+                -- codes do not nest, so the name closes gold and reopens it.
+                table.insert(tagParts, ("|cffffd100(%s)|r"):format(
+                    (RR.L["Boss: %s"]):format(
+                        "|cffffffff" .. RR.L[item.bossNpc] .. "|r|cffffd100")))
+            end
+            -- A summoned encounter: nothing roams, so neither Rare nor
+            -- Boss is honest. Same two-tone shape as both.
+            if item.eventNpc then
+                table.insert(tagParts, ("|cffffd100(%s)|r"):format(
+                    (RR.L["Event: %s"]):format(
+                        "|cffffffff" .. RR.L[item.eventNpc] .. "|r|cffffd100")))
+            end
+            -- `tag` renders as a gold suffix on TRASH rows, where there is
+            -- no titled section to name the acquisition. Boss-loot tag rows
+            -- partition into their own section instead, so the suffix would
+            -- repeat the header there and is suppressed.
+            if item.tag and not UI._inTaggedSection then
+                -- Typed like the rare/boss/event tags: a bare source name
+                -- read as a mystery ("Sothos & Jarien"). "From:" covers the
+                -- whole remaining family -- named trash mobs and lootable
+                -- objects alike.
+                table.insert(tagParts, ("|cffffd100(%s)|r"):format(
+                    (RR.L["From: %s"]):format(
+                        "|cffffffff" .. RR.L[item.tag] .. "|r|cffffd100")))
+            end
+
             -- Wearable-class tag, always: these rows show for every class
             -- (the appearance is collectible regardless), so the tag is
             -- what says who actually equips the piece.
@@ -5718,9 +6882,7 @@ BuildTransmogDetail = function(stepOrCtx)
 
             -- `tokenReward` carries no row tag. It groups the row into the
             -- tier section and sorts it beside the others from the same
-            -- token; the hint's own "Yields" line names which weapons each
-            -- token gives, so a per-row label would only repeat it in a
-            -- form no other row tag uses.
+            -- token; a per-row label would be a form no other row tag uses.
         end
 
         -- Same-named siblings (the two Warglaives of Azzinoth) get their
@@ -5738,10 +6900,12 @@ BuildTransmogDetail = function(stepOrCtx)
             end
             if not tagLabel then
                 if item.id and GetItemInfo then
-                    local equipLoc = select(9, GetItemInfo(item.id))
+                    local equipLoc = select(9, C_Item.GetItemInfo(item.id))
                     if equipLoc and equipLoc ~= "" then tagLabel = _G[equipLoc] end
                 end
-                tagLabel = tagLabel or item.slot
+                -- Only when the slot is what tells the siblings apart.
+                if not slotVaries[shownName] then tagLabel = nil end
+                tagLabel = tagLabel or (slotVaries[shownName] and item.slot)
             end
             if tagLabel and tagLabel ~= "" then
                 table.insert(tagParts, ("|cffffffff(|r|cff9d9d9d%s|r|cffffffff)|r"):format(
@@ -5761,10 +6925,14 @@ BuildTransmogDetail = function(stepOrCtx)
         -- another item, but equipping the carried piece is what collects
         -- this source and completes the row. Stays at the end of the run:
         -- it is an alert about the player's bags, not a property of the item.
-        if item.bind == "BoE" then
+        if item.bind == "BoE" or item.bagAlert then
             local carriedState = ItemSummaryState(item)
-            if (carriedState == "missing" or carriedState == "shared")
-                and GetItemCount and (GetItemCount(item.id, false) or 0) > 0 then
+            -- `bagAlert` rows (Zul'Farrak's combinable sword halves) show
+            -- the suffix whenever carried: the half stays combine material
+            -- even after its own appearance is collected.
+            if (item.bagAlert
+                    or carriedState == "missing" or carriedState == "shared")
+                and GetItemCount and (C_Item.GetItemCount(item.id, false) or 0) > 0 then
                 table.insert(tagParts, ("|cffffffff(|r|cff4dccff%s|r|cffffffff)|r"):format(
                     RR.L["in your bags!"]))
             end
@@ -5780,10 +6948,20 @@ BuildTransmogDetail = function(stepOrCtx)
     local function EmitItemRow(rowsOut, item, isTierRow)
         local indicatorText, nameText, tagsText = FormatItemCells(item)
         table.insert(rowsOut, { kind = "item", indicator = indicatorText,
-            name = nameText, tags = tagsText, isTier = isTierRow })
+            name = nameText, tags = tagsText, isTier = isTierRow,
+            itemID = item.id })
         if item.acquisitionNote then
-            table.insert(rowsOut, { kind = "note",
-                text = ("|cff888888%s|r"):format(RR.L[item.acquisitionNote]) })
+            -- Rows that share a note (a legendary pair) show it once, under
+            -- the last of them, rather than once per row.
+            local noteText = ("|cff888888%s|r"):format(RR.L[item.acquisitionNote])
+            for index = #rowsOut, 1, -1 do
+                local row = rowsOut[index]
+                if row.kind == "note" and row.text == noteText then
+                    table.remove(rowsOut, index)
+                    break
+                end
+            end
+            table.insert(rowsOut, { kind = "note", text = noteText })
         end
     end
 
@@ -5904,6 +7082,17 @@ BuildTransmogDetail = function(stepOrCtx)
     end
 
     local hardModeRows    = BuildSectionRows(hardModeItems)
+    UI._inTaggedSection = true
+    local taggedRows      = BuildSectionRows(taggedItems)
+    UI._inTaggedSection = nil
+    local taggedLabel     = taggedItems[1] and taggedItems[1].tag or nil
+    -- The section's explanatory prose collapses with it, below the rows --
+    -- the pattern the trash section's placement established.
+    if taggedRows and #taggedRows > 0 and boss.tagNote then
+        table.insert(taggedRows, { kind = "blank" })
+        table.insert(taggedRows, { kind = "text", soft = true,
+            text = ("|cff9d9d9d%s|r"):format(RR.L[boss.tagNote]) })
+    end
     local factionTierRows = BuildSectionRows(factionTierItems)
     local factionRows     = BuildSectionRows(factionLootItems)
 
@@ -5912,16 +7101,24 @@ BuildTransmogDetail = function(stepOrCtx)
     -- so each slot renders as 3-state (none/some/all) rather than an
     -- inaccurate X/N ratio.
     local raid = RR.currentRaid
-    -- Browser may display a non-current raid; resolve raid from boss.
+    -- Browser may display a non-current raid; resolve raid from boss. BOTH
+    -- instance tables, or a browsed dungeon falls through to whatever
+    -- instance is currently loaded and renders ITS trash section -- the
+    -- first dungeon trash data made every dungeon show one raid's rows.
     if not raid or (raid.bosses and raid.bosses[boss.index] ~= boss) then
-        for _, r in pairs(RetroRuns_Data or {}) do
-            if r.bosses then
-                for _, b in ipairs(r.bosses) do
-                    if b == boss then raid = r; break end
+        local resolved
+        for _, tbl in ipairs({ RetroRuns_Data, RetroRuns_DungeonData }) do
+            for _, r in pairs(tbl or {}) do
+                if r.bosses then
+                    for _, b in ipairs(r.bosses) do
+                        if b == boss then resolved = r; break end
+                    end
                 end
+                if resolved then break end
             end
-            if raid and raid.bosses and raid.bosses[boss.index] == boss then break end
+            if resolved then break end
         end
+        if resolved then raid = resolved end
     end
 
     local tokenPools   = raid and raid.weaponTokenPools
@@ -5944,7 +7141,7 @@ BuildTransmogDetail = function(stepOrCtx)
                 matches = true
             end
             if matches then
-                local tokenName = (GetItemInfo(tokenID))
+                local tokenName = (C_Item.GetItemInfo(tokenID))
                 local family = ParseTokenFamily(tokenName)
                 local info = family and TOKEN_FAMILY_INFO[family]
                 if info and info.slotLabel and info.classes then
@@ -6004,14 +7201,12 @@ BuildTransmogDetail = function(stepOrCtx)
         end
 
         if #tokenRows > 0 then
-            -- Blank-line separator above the token section. Hard-mode and
-            -- faction rows live in their own sections now, so only the
-            -- in-list groups count.
-            if #binaryItems > 0 or #perDiffItems > 0 then
-                table.insert(mainRows, { kind = "blank" })
-            end
-            for _, row in ipairs(tokenRows) do
-                table.insert(mainRows, { kind = "text", text = row })
+            -- Token lines lead the list, flagged as tier rows so the block
+            -- below draws them under TIER / TOKENS with the redemption hint
+            -- and closes them with LOOT, the shape every tier boss has.
+            for offset = #tokenRows, 1, -1 do
+                table.insert(mainRows, 1,
+                    { kind = "text", text = tokenRows[offset], isTier = true })
             end
 
             -- Vendor hint line is rendered separately as its own
@@ -6036,48 +7231,91 @@ BuildTransmogDetail = function(stepOrCtx)
             end
         end
         if #trashItems > 0 then
-            -- Partitioned by row shape like the boss list: single-glyph
-            -- binary rows first, per-difficulty strips after, a blank line
-            -- between. One alphabetical pass wove the two shapes together.
-            local binaryTrash, pilledTrash = {}, {}
+            -- Bundled by acquisition: rows held by one named rare, event,
+            -- boss or object mechanism sit together, a blank line between
+            -- bundles, plain pool trash leading -- the legacy section's
+            -- grouping shape. One slot-sorted pass scattered the source
+            -- tags through the list.
+            local plainTrash, groupOrder, groupsByKey = {}, {}, {}
             for _, item in ipairs(trashItems) do
-                -- An upgrade row is binary in source count but renders as
-                -- a strip, so it groups with the pilled rows -- otherwise
-                -- the one plain glyph lands mid-list among them.
-                if ItemShape(item) == "binary" and not item.upgrade then
-                    table.insert(binaryTrash, item)
+                local key = item.rareNpc or item.eventNpc or item.bossNpc
+                    or item.tag
+                if key then
+                    if not groupsByKey[key] then
+                        groupsByKey[key] = {}
+                        groupOrder[#groupOrder + 1] = key
+                    end
+                    table.insert(groupsByKey[key], item)
                 else
-                    table.insert(pilledTrash, item)
+                    table.insert(plainTrash, item)
                 end
             end
-            table.sort(binaryTrash, CompareRegularRows)
-            table.sort(pilledTrash, CompareRegularRows)
+            table.sort(groupOrder)
             trashSectionRows = {}
-            trashCollected, trashTotal = 0, #trashItems
+            -- Cross-listed rows render but do not count; the boss row they
+            -- duplicate keeps the tally.
+            local bossCarried = UI.BossCarriedSourceSet(raid)
+            trashCollected, trashTotal = 0, 0
+            for _, item in ipairs(trashItems) do
+                if not UI.TrashRowIsBossCarried(item, bossCarried) then
+                    trashTotal = trashTotal + 1
+                end
+            end
             local function EmitTrashRow(item)
                 EmitItemRow(trashSectionRows, item)
+                if UI.TrashRowIsBossCarried(item, bossCarried) then return end
                 local state = ItemSummaryState(item)
                 if state ~= "missing" and state ~= "shared" then
                     trashCollected = trashCollected + 1
                 end
             end
-            for _, item in ipairs(binaryTrash) do EmitTrashRow(item) end
-            if #binaryTrash > 0 and #pilledTrash > 0 then
-                table.insert(trashSectionRows, { kind = "blank" })
+            -- Within a bundle the shape split still applies: single-glyph
+            -- binary rows first, per-difficulty strips after (a blank
+            -- between shapes only in the plain bundle, where both runs can
+            -- be long). An upgrade row is binary in source count but
+            -- renders as a strip, so it groups with the pilled rows.
+            local emittedAny = false
+            local function EmitTrashBundle(items, blankBetweenShapes)
+                local binaryRows, pilledRows = {}, {}
+                for _, item in ipairs(items) do
+                    if ItemShape(item) == "binary" and not item.upgrade then
+                        table.insert(binaryRows, item)
+                    else
+                        table.insert(pilledRows, item)
+                    end
+                end
+                if #binaryRows + #pilledRows == 0 then return end
+                table.sort(binaryRows, CompareRegularRows)
+                table.sort(pilledRows, CompareRegularRows)
+                if emittedAny then
+                    table.insert(trashSectionRows, { kind = "blank" })
+                end
+                for _, item in ipairs(binaryRows) do EmitTrashRow(item) end
+                if blankBetweenShapes and #binaryRows > 0
+                    and #pilledRows > 0 then
+                    table.insert(trashSectionRows, { kind = "blank" })
+                end
+                for _, item in ipairs(pilledRows) do EmitTrashRow(item) end
+                emittedAny = true
             end
-            for _, item in ipairs(pilledTrash) do EmitTrashRow(item) end
+            EmitTrashBundle(plainTrash, true)
+            for _, key in ipairs(groupOrder) do
+                EmitTrashBundle(groupsByKey[key], false)
+            end
 
-            -- Legend for the upgrade pill, under the rows it explains.
-            -- {upArrow} takes the same tinted glyph the pill uses, dimmed,
-            -- and {item} resolves to a real item link.
+            -- Legend for the upgrade chain, under the rows it explains.
+            -- {dot} takes the same dot the rows use, dimmed, and {item}
+            -- resolves to a real item link.
             if raid.trashNote and raid.trashNote.text then
                 local noteText = RR.L[raid.trashNote.text]
-                noteText = noteText:gsub("{upArrow}",
-                    UI.UpgradeArrowGlyph(DOT_INACTIVE))
+                noteText = noteText:gsub("{dot}",
+                    UI.ProgressDotGlyph(DOT_INACTIVE))
+                noteText = noteText:gsub("{pad}",
+                    "|TInterface\\AddOns\\RetroRuns\\Media\\StatusDot:10:10:0:0:64:64:0:2:0:2|t")
                 if raid.trashNote.itemID then
-                    local _, itemLink = GetItemInfo(raid.trashNote.itemID)
+                    local _, itemLink = C_Item.GetItemInfo(raid.trashNote.itemID)
                     if not itemLink then
-                        local fallbackName = GetItemInfo(raid.trashNote.itemID)
+                        local fallbackName = C_Item.GetItemInfo(raid.trashNote.itemID)
                             or RR.L["(item)"]
                         itemLink = ("|cffa335ee[%s]|r"):format(fallbackName)
                     end
@@ -6091,6 +7329,119 @@ BuildTransmogDetail = function(stepOrCtx)
             -- the vendor hint at the foot of this section.
             if raid.tokenVendors and raid.tokenVendors.below == "trash" then
                 table.insert(trashSectionRows, { kind = "sanctum" })
+            end
+        end
+    end
+
+    -- Appearances obtainable only in a legacy version of this instance.
+    -- Instance-scoped like trash rather than hung off a boss, because the
+    -- bosses that drop them do not exist in the modern layout. The sanctum
+    -- marker at the foot is what draws the access hint and its travel plane.
+    local legacySectionRows, legacyCollected, legacyTotal
+    if raid and raid.legacyLoot and #raid.legacyLoot > 0 then
+        UI._equipGateExempt = UI.EquipGateExemptFor(raid.legacyLoot,
+            ActiveClassFilter())
+        local legacyItems = {}
+        for _, item in ipairs(raid.legacyLoot) do
+            if ItemIsTransmogCandidate(item, nil, true) then
+                table.insert(legacyItems, item)
+            end
+        end
+        if #legacyItems > 0 then
+            legacySectionRows = {}
+            -- Counted by item id, not by row: a piece that drops in more
+            -- than one wing is listed under each, and the count is of
+            -- appearances to collect.
+            legacyCollected, legacyTotal = 0, 0
+            local legacyCounted, legacyCountedOwned = {}, {}
+            for _, item in ipairs(legacyItems) do
+                local key = item.id or item
+                if not legacyCounted[key] then
+                    legacyCounted[key] = true
+                    legacyTotal = legacyTotal + 1
+                end
+            end
+            -- Grouped by the wing the appearance actually drops in, each
+            -- under its own divider, because the wings are separate instances
+            -- a player enters one at a time. Within a wing, boss drops lead
+            -- and rare-spawn drops follow: the two are found completely
+            -- differently and each row already names its own source.
+            local function EmitLegacyRow(item)
+                EmitItemRow(legacySectionRows, item)
+                local state = ItemSummaryState(item)
+                if state ~= "missing" and state ~= "shared" then
+                    local key = item.id or item
+                    if not legacyCountedOwned[key] then
+                        legacyCountedOwned[key] = true
+                        legacyCollected = legacyCollected + 1
+                    end
+                end
+            end
+            local wingOrder, byWing = {}, {}
+            for _, item in ipairs(legacyItems) do
+                local wing = item.legacyWing or ""
+                if not byWing[wing] then
+                    byWing[wing] = { boss = {}, rare = {}, trash = {} }
+                    wingOrder[#wingOrder + 1] = wing
+                end
+                local bucket = byWing[wing]
+                local target = bucket.trash
+                if item.rareNpc then
+                    target = bucket.rare
+                elseif item.bossNpc then
+                    target = bucket.boss
+                end
+                table.insert(target, item)
+            end
+            for index, wing in ipairs(wingOrder) do
+                local bucket = byWing[wing]
+                if wing ~= "" then
+                    -- No blank ahead of it: PlaceListDivider already puts a
+                    -- cushion above the rule, and stacking a blank row on top
+                    -- of that left a visible hole between wings.
+                    table.insert(legacySectionRows,
+                        { kind = "divider", label = wing })
+                end
+                -- Boss drops grouped per boss, a blank line between groups,
+                -- so a wing with several bosses reads as several short lists
+                -- rather than one run of rows that all name a different boss.
+                local bossOrder, byBoss = {}, {}
+                for _, item in ipairs(bucket.boss) do
+                    local who = item.bossNpc or ""
+                    if not byBoss[who] then
+                        byBoss[who] = {}
+                        bossOrder[#bossOrder + 1] = who
+                    end
+                    table.insert(byBoss[who], item)
+                end
+                table.sort(bossOrder)
+                local emitted = false
+                for _, who in ipairs(bossOrder) do
+                    if emitted then
+                        table.insert(legacySectionRows, { kind = "blank" })
+                    end
+                    for _, item in ipairs(byBoss[who]) do EmitLegacyRow(item) end
+                    emitted = true
+                end
+                if emitted and #bucket.rare > 0 then
+                    table.insert(legacySectionRows, { kind = "blank" })
+                end
+                for _, item in ipairs(bucket.rare) do EmitLegacyRow(item) end
+                -- Anything with no boss and no rare behind it is trash, and
+                -- takes its own divider so it is not read as a boss drop.
+                if #bucket.trash > 0 then
+                    table.insert(legacySectionRows,
+                        { kind = "divider", label = "Trash" })
+                    for _, item in ipairs(bucket.trash) do EmitLegacyRow(item) end
+                end
+            end
+            if raid.legacyNote and raid.legacyNote.text then
+                -- Unlabelled divider: the hint explains the whole block, not
+                -- the rows immediately above it, so it needs separating from
+                -- them without a heading of its own.
+                table.insert(legacySectionRows,
+                    { kind = "divider", subtle = true })
+                table.insert(legacySectionRows, { kind = "sanctum" })
             end
         end
     end
@@ -6171,17 +7522,63 @@ BuildTransmogDetail = function(stepOrCtx)
         if raid and raid.tierNote and raid.tierNote.text then
             local noteText = RR.L[raid.tierNote.text]
             noteText = noteText:gsub("{dot}", UI.ProgressDotGlyph(DOT_INACTIVE))
+            -- {pad} is a dot-width blank (a transparent corner of the dot
+            -- texture) so the words start in one column on every line.
+            noteText = noteText:gsub("{pad}",
+                "|TInterface\\AddOns\\RetroRuns\\Media\\StatusDot:10:10:0:0:64:64:0:2:0:2|t")
             if raid.tierNote.itemID then
-                local _, itemLink = GetItemInfo(raid.tierNote.itemID)
+                local _, itemLink = C_Item.GetItemInfo(raid.tierNote.itemID)
                 if itemLink then noteText = noteText:gsub("{item}", itemLink) end
+            end
+            for _, link in ipairs(raid.tierNote.links or {}) do
+                -- Follows the class the rows above are showing, which is
+                -- the browser's class filter when one is set.
+                local itemID = (link.byClass and link.byClass[ActiveClassFilter()])
+                    or link.default
+                local _, itemLink = C_Item.GetItemInfo(itemID)
+                local shown = itemLink or ("[" .. RR.L[link.name] .. "]")
+                noteText = noteText:gsub(link.token:gsub("%p", "%%%0"),
+                    (shown:gsub("%%", "%%%%")))
             end
             table.insert(tierInfoRows, { kind = "text", soft = true,
                 text = ("|cff9d9d9d%s|r"):format(noteText) })
         end
-        if not placeUnderTrash then
-            table.insert(tierInfoRows, { kind = "sanctum" })
+        -- A block of token lines with no tier rows (Denathrius) has one
+        -- redemption line to show, so it stays in view instead of folding
+        -- into the subsection.
+        local tierHasItems = false
+        for index = firstTierIndex, lastTierIndex do
+            if mainRows[index].kind == "item" then tierHasItems = true; break end
         end
         local afterTier = {}
+        if not placeUnderTrash then
+            if tierHasItems then
+                table.insert(tierInfoRows, { kind = "sanctum" })
+            else
+                table.insert(afterTier, { kind = "sanctum" })
+            end
+        end
+        -- A boss's own tier line (Dragon Soul's "any Raid Finder token"
+        -- bosses) sits directly under its tier rows, always visible.
+        if boss.tierNote then
+            table.insert(afterTier, { kind = "blank" })
+            table.insert(afterTier, { kind = "text", soft = true,
+                text = ("|cff9d9d9d%s|r"):format(RR.L[boss.tierNote]) })
+        end
+        -- The shape line closes the tier list, directly under the rows it
+        -- describes. The color legend footer is a screen away past the
+        -- whole loot list, too far to decode a dot pair up here.
+        if viewHasFactionPair then
+            local pairLabel = UI.FactionPairLegendText()
+            if pairLabel then
+                -- Carried as an item row so it inherits the tier block's
+                -- column offsets; pairKey tells the layout to draw it as a
+                -- caption rather than a row.
+                table.insert(afterTier, { kind = "item", isTier = true,
+                    pairKey = true, indicator = "", name = pairLabel,
+                    tags = "" })
+            end
+        end
         if #tierInfoRows > 0 then
             -- The layout pass draws the subsection header here, and the
             -- rows under it only while expanded. Emitted even when the only
@@ -6211,18 +7608,66 @@ BuildTransmogDetail = function(stepOrCtx)
             table.insert(mainRows, firstTierIndex,
                 { kind = "divider", label = "TIER / TOKENS" })
         end
+    elseif boss.tierNote then
+        -- No tier rows of its own, but a tier line to show: it opens the
+        -- list under the same divider the rows would have.
+        local noteRows = {
+            { kind = "divider", label = "TIER / TOKENS" },
+            { kind = "text", soft = true,
+              text = ("|cff9d9d9d%s|r"):format(RR.L[boss.tierNote]) },
+        }
+        if #mainRows > 0 then
+            table.insert(noteRows, { kind = "divider", label = "LOOT" })
+        end
+        for offset = #noteRows, 1, -1 do
+            table.insert(mainRows, 1, noteRows[offset])
+        end
     end
 
+    -- Named-set block: titled divider carrying the set's own name, rows
+    -- prepended ahead of everything (the position the tier block owns on
+    -- raids). setRows is nil for a set-less boss, per BuildSectionRows.
+    local setRows = BuildSectionRows(setItems)
+    if setRows and #setRows > 0 then
+        -- Through RR.L like every other authored label: the raw field
+        -- rendered English on all nine translated clients.
+        local setLabel = RR.L[setItems[1].setName]
+        -- Closes the set block the way "LOOT" closes the tier block on
+        -- raids, so the plain drops stop reading as more of the set. Only
+        -- when followers exist; mainRows still holds just the loot here,
+        -- the difficulty line is prepended after this block.
+        if #mainRows > 0 then
+            table.insert(mainRows, 1, { kind = "divider", label = "LOOT" })
+        end
+        for offset = #setRows, 1, -1 do
+            table.insert(mainRows, 1, setRows[offset])
+        end
+        table.insert(mainRows, 1, { kind = "divider", label = setLabel })
+    end
+
+    -- The difficulty line claims the top only after every prepend is done.
+    if activeName then
+        table.insert(mainRows, 1, { kind = "blank" })
+        table.insert(mainRows, 1, { kind = "text",
+            text = ("|cff888888" .. RR.L["Current difficulty: %s"] .. "|r"):format(activeName) })
+    end
+
+    UI._suppressActiveDifficulty = nil
     return {
         mainRows       = mainRows,
         tierInfoRows   = tierInfoRows,
         trashRows      = trashSectionRows,
         trashCollected = trashCollected,
         trashTotal     = trashTotal,
+        legacyRows      = legacySectionRows,
+        legacyCollected = legacyCollected,
+        legacyTotal     = legacyTotal,
+        legacyLabel     = raid and raid.legacyLabel or nil,
         hardModeRows   = hardModeRows,
+        taggedRows     = taggedRows,
+        taggedLabel    = taggedLabel,
         factionTierRows = factionTierRows,
         factionRows    = factionRows,
-        hasFactionPair = viewHasFactionPair,
     }
 end
 
@@ -6230,7 +7675,7 @@ end
 -- dot colors mean the same thing whether or not the player is in a
 -- supported raid, so it sits below the per-boss content and the
 -- weapon-token redemption hint (when present), as a global footer.
-local function BuildTmogLegendText(showFactionPair)
+local function BuildTmogLegendText()
     local text =
         ("|c%s" .. RR.L["green"] .. "|r|cff888888 = " .. RR.L["collected"]
             .. "      |r|c%s" .. RR.L["gold"] .. "|r|cff888888 = "
@@ -6241,27 +7686,7 @@ local function BuildTmogLegendText(showFactionPair)
             .. RR.L["gray"] .. "|r|cff888888 = " .. RR.L["not collected"]
             .. "|r"):format(
             DOT_ACTIVE, DOT_INACTIVE)
-    -- Third line only where the view actually renders a faction pair, so
-    -- the other fifty raids keep a two-line footer. It explains the SHAPE;
-    -- the colors a pair takes are the four already named above, which is
-    -- why the sample dots carry no state of their own -- they are drawn in
-    -- the same gray as the surrounding label text so they read as
-    -- typography rather than as a fifth color to learn.
-    local lineCount = 2
-    if showFactionPair then
-        local faction = UnitFactionGroup and UnitFactionGroup("player")
-        local nearName = (faction == "Horde") and FACTION_HORDE or FACTION_ALLIANCE
-        local farName  = (faction == "Horde") and FACTION_ALLIANCE or FACTION_HORDE
-        if nearName and farName then
-            text = text .. "\n"
-                .. UI.ProgressDotGlyph(DOT_INACTIVE)
-                .. UI.ProgressDotGlyph(DOT_INACTIVE)
-                .. ("|cff888888 = " .. RR.L["%s & %s"] .. "|r"):format(
-                    nearName, farName)
-            lineCount = 3
-        end
-    end
-    return text, lineCount
+    return text, 2
 end
 
 -------------------------------------------------------------------------------
@@ -6368,13 +7793,191 @@ UI.BrowserKeyOf = function(entry)
     return entry.instanceID
 end
 
--- Kind-aware resolve for browserState.raidKey.
-UI.BrowserInstanceByKey = function(key)
+-- Aims the browser at the instance the player is standing in, on the boss
+-- they are most likely to care about. Kind-aware in both halves: dungeons
+-- key by journalInstanceID where raids key by instance map id, and their
+-- boss comes from the encounter last pulled rather than from a routing
+-- step, since an unrouted instance has no step to read. A no-op outside a
+-- supported instance, which leaves the last-browsed selection alone.
+function UI.PointBrowserAtCurrentInstance()
+    local instance = RR.currentRaid
+    if not instance then return end
+    browserState.instanceKind = (instance.kind == "dungeon")
+        and "dungeon" or "raid"
+    browserState.expansion = instance.expansion
+    browserState.raidKey   = UI.BrowserKeyOf(instance)
+    local step = RR.state and RR.state.activeStep
+    local bossIndex = (step and step.bossIndex)
+        or (RR.state and RR.state.lastEncounterBossIndex)
+    -- Nothing pulled yet this session (a reload mid-run lands here, since
+    -- the remembered encounter does not survive one): fall back to the
+    -- first boss still standing, which is where the player is headed.
+    if not bossIndex and RR.state and RR.state.bossesKilled then
+        for _, boss in ipairs(instance.bosses or {}) do
+            if not RR.state.bossesKilled[boss.index] then
+                bossIndex = boss.index
+                break
+            end
+        end
+    end
+    if bossIndex then
+        browserState.bossIndex = bossIndex
+    end
+end
+
+-- Resolve an instance from an explicit kind + key. Raids key by instance
+-- map id, dungeons by journalInstanceID (wings share maps), so the kind has
+-- to travel with the key. Windows keep their own selection state, hence the
+-- explicit kind rather than reading any one window's.
+UI.InstanceByKindKey = function(kind, key)
     if not key then return nil end
-    if browserState.instanceKind == "dungeon" then
+    if kind == "dungeon" then
         return RR:GetDungeonByKey(key)
     end
     return RR:GetRaidByInstanceID(key)
+end
+
+-- Kind-aware resolve for browserState.raidKey.
+UI.BrowserInstanceByKey = function(key)
+    return UI.InstanceByKindKey(browserState.instanceKind, key)
+end
+
+-- Flat name index over both instance tables for the browser's search box:
+-- one entry per expansion, instance, boss, and loot row, each carrying the
+-- dropdown selection that reaches it. Built once per session on first use;
+-- the data tables never change after load. Item entries index the authored
+-- name; expansion, instance, and boss entries index the localized and
+-- authored names.
+UI.BuildTmogSearchIndex = function()
+    if UI._tmogSearchIndex then return UI._tmogSearchIndex end
+    local index = {}
+    local function Add(rank, label, context, searchText, entry)
+        entry.rank       = rank
+        entry.label      = label
+        entry.labelLower = label:lower()
+        entry.display = context
+            and (label .. " |cff888888-- " .. context .. "|r")
+            or label
+        entry.search  = searchText:lower()
+        index[#index + 1] = entry
+    end
+    for _, instanceKind in ipairs({ "raid", "dungeon" }) do
+        local kindLabel = (instanceKind == "dungeon")
+            and RR.L["Dungeons"] or RR.L["Raids"]
+        local byExpansion = UI.EnumerateInstances(instanceKind)
+        for expansionName, instances in pairs(byExpansion) do
+            if instances[1] then
+                Add(0, RR.L[expansionName], kindLabel,
+                    RR.L[expansionName] .. " " .. expansionName,
+                    { instanceKind = instanceKind,
+                      expansion = expansionName,
+                      key = UI.BrowserKeyOf(instances[1]), bossIndex = 1 })
+            end
+            for _, instance in ipairs(instances) do
+                local key = UI.BrowserKeyOf(instance)
+                local instanceName = RR:GetLocalizedRaidName(instance)
+                                     or instance.name or "?"
+                Add(1, instanceName, RR.L[expansionName],
+                    instanceName .. " " .. (instance.name or ""),
+                    { instanceKind = instanceKind, expansion = expansionName,
+                      key = key, bossIndex = 1 })
+                for bossIndex, boss in ipairs(instance.bosses or {}) do
+                    local bossName = RR:GetLocalizedBossName(boss)
+                                     or boss.name or "?"
+                    Add(2, bossName, instanceName,
+                        bossName .. " " .. (boss.name or ""),
+                        { instanceKind = instanceKind,
+                          expansion = expansionName, key = key,
+                          bossIndex = bossIndex })
+                    for _, item in ipairs(boss.loot or {}) do
+                        if item.name then
+                            Add(3, item.name,
+                                bossName .. ", " .. instanceName, item.name,
+                                { instanceKind = instanceKind,
+                                  expansion = expansionName, key = key,
+                                  bossIndex = bossIndex, itemID = item.id,
+                                  itemClasses = item.classes,
+                                  itemEquipClasses = item.equipClasses,
+                                  section = (item.hardModeOnly and "hardmode")
+                                      or (item.faction and "faction")
+                                      or nil })
+                        end
+                    end
+                end
+                local trashLabel = (RR.L["Trash Drops:"]):gsub("[:：]%s*$", "")
+                -- Named rares, events and map markers search like bosses
+                -- and land on the trash section that lists their drops.
+                local namedSeen = {}
+                local function AddNamed(name, context)
+                    if not name or namedSeen[name] then return end
+                    namedSeen[name] = true
+                    local shown = RR.L[name]
+                    Add(2, shown, context .. ", " .. instanceName,
+                        shown .. " " .. name,
+                        { instanceKind = instanceKind,
+                          expansion = expansionName, key = key,
+                          bossIndex = 1, section = "trash" })
+                end
+                for _, item in ipairs(instance.trashLoot or {}) do
+                    AddNamed(item.rareNpc, RR.L["Rare"])
+                    AddNamed(item.eventNpc, RR.L["Event"])
+                    AddNamed(item.tag, RR.L["Trash Drops:"]:gsub("[:：]%s*$", ""))
+                end
+                for _, poi in ipairs(instance.pois or {}) do
+                    AddNamed(poi.rareNpc, RR.L["Rare"])
+                    AddNamed(poi.mapLabel, RR.L["Map marker"])
+                end
+                for _, item in ipairs(instance.trashLoot or {}) do
+                    if item.name then
+                        Add(3, item.name,
+                            trashLabel .. ", " .. instanceName, item.name,
+                            { instanceKind = instanceKind,
+                              expansion = expansionName, key = key,
+                              bossIndex = 1, itemID = item.id,
+                              itemClasses = item.classes,
+                              itemEquipClasses = item.equipClasses,
+                              section = "trash" })
+                    end
+                end
+            end
+        end
+    end
+    UI._tmogSearchIndex = index
+    return index
+end
+
+-- Case-insensitive substring query against the index. Returns up to
+-- maxResults entries plus the count left off, or nil when the query is
+-- under two characters. Ordered by match closeness first -- an exact name
+-- beats a prefix beats a mid-name hit -- then expansions, instances,
+-- bosses, items, then name.
+UI.QueryTmogSearch = function(query, maxResults)
+    query = (query or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+    if #query < 2 then return nil end
+    local matches = {}
+    for _, entry in ipairs(UI.BuildTmogSearchIndex()) do
+        local position = entry.search:find(query, 1, true)
+        if position then
+            entry.matchQuality = (entry.labelLower == query and 3)
+                or (position == 1 and 2) or 1
+            matches[#matches + 1] = entry
+        end
+    end
+    table.sort(matches, function(a, b)
+        if a.matchQuality ~= b.matchQuality then
+            return a.matchQuality > b.matchQuality
+        end
+        if a.rank ~= b.rank then return a.rank < b.rank end
+        return a.label < b.label
+    end)
+    local overflow = 0
+    if #matches > maxResults then
+        overflow = #matches - maxResults
+        for extraIndex = #matches, maxResults + 1, -1 do
+            matches[extraIndex] = nil
+        end
+    end
+    return matches, overflow
 end
 
 -- Lenient-count helpers: summed across nested levels. For dropdown labels.
@@ -6395,8 +7998,16 @@ local function CountRaidLoot(raid)
     -- reads nothing but the `loot` array off what it is handed, so a table
     -- carrying only that field counts the same way a boss does.
     if raid.trashLoot and #raid.trashLoot > 0 then
+        -- Cross-listed rows are already counted on their boss.
+        local bossCarried = UI.BossCarriedSourceSet(raid)
+        local countedTrash = {}
+        for _, item in ipairs(raid.trashLoot) do
+            if not UI.TrashRowIsBossCarried(item, bossCarried) then
+                countedTrash[#countedTrash + 1] = item
+            end
+        end
         local trashNeeded, trashShared, trashTotal =
-            CountBossLoot({ loot = raid.trashLoot })
+            CountBossLoot({ loot = countedTrash })
         if trashNeeded then
             needed = needed + trashNeeded
             shared = shared + trashShared
@@ -6506,26 +8117,26 @@ local function WarmBrowserItemCache()
     for _, boss in ipairs(raid.bosses) do
         if boss.loot then
             for _, item in ipairs(boss.loot) do
-                if item.id then GetItemInfo(item.id) end
+                if item.id then C_Item.GetItemInfo(item.id) end
             end
         end
         if boss.specialLoot then
             for _, item in ipairs(boss.specialLoot) do
-                if item.id then GetItemInfo(item.id) end
+                if item.id then C_Item.GetItemInfo(item.id) end
             end
         end
         -- Footnote and omnitoken items live outside loot/specialLoot but
         -- still render as links, so they warm here too.
         if boss.tmogFootnote then
             if boss.tmogFootnote.itemID then
-                GetItemInfo(boss.tmogFootnote.itemID)
+                C_Item.GetItemInfo(boss.tmogFootnote.itemID)
             end
             for _, itemID in ipairs(boss.tmogFootnote.itemIDs or {}) do
-                GetItemInfo(itemID)
+                C_Item.GetItemInfo(itemID)
             end
         end
         if boss.omniToken and boss.omniToken.itemID then
-            GetItemInfo(boss.omniToken.itemID)
+            C_Item.GetItemInfo(boss.omniToken.itemID)
         end
     end
 end
@@ -6615,7 +8226,7 @@ GetOrCreateTmogWindow = function()
     title:SetShadowOffset(1, -1)
     title:SetShadowColor(0, 0, 0, 1)
 
-    local closeBtn = CreateFrame("Button", nil, tmogFrame, "UIPanelCloseButton")
+    local closeBtn = UI.MakeRetroCloseButton(tmogFrame)
     closeBtn:SetPoint("TOPRIGHT", -4, -4)
     closeBtn:SetScript("OnClick", function()
         browserState.active = false
@@ -6623,8 +8234,8 @@ GetOrCreateTmogWindow = function()
     end)
 
     -- The class filter is a view for as long as the browser is open, never a
-    -- preference. Clearing on hide sends the next open back to the class being
-    -- played.
+    -- preference. Clearing on hide sends the next open back to the Default
+    -- Transmog Filter setting.
     tmogFrame:HookScript("OnHide", function()
         browserState.classFilter = nil
         if tmogFrame.RefreshClassDropdown then
@@ -6633,22 +8244,19 @@ GetOrCreateTmogWindow = function()
     end)
 
     -- Three cascading dropdowns, Expansion / Raid / Boss, each resetting its
-    -- successors when changed.
-    --
-    -- The template right-justifies its text with wide padding, leaving a gap at
-    -- the bar's left; re-justifying LEFT reclaims it, and `labelText` puts a
-    -- caption there.
+    -- successors when changed. `labelText` puts a caption to the bar's left.
     local function MakeDD(name, width, parent, labelText)
-        local dd = CreateFrame("Frame", "RetroRuns" .. name .. "DD", parent, "UIDropDownMenuTemplate")
-        UIDropDownMenu_SetWidth(dd, width)
-        -- Left-justify the selected-value text (template default is RIGHT).
-        local fs = _G[dd:GetName() .. "Text"]
-        if fs then fs:SetJustifyH("LEFT") end
-        -- Optional caption to the left of the bar.
+        local dd = CreateFrame("DropdownButton", "RetroRuns" .. name .. "DD", parent,
+                               "WowStyle1DropdownTemplate")
+        dd:SetWidth(width)
+        UI.StyleDropdown(dd)
         if labelText then
             local lbl = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
             lbl:SetText(labelText)
-            lbl:SetJustifyH("LEFT")
+            -- Right-justified so every caption sits the same distance from its
+            -- bar. Left-justified inside a fixed-width box, a short caption
+            -- ("Exp:") drifts far from its bar while a long one hugs it.
+            lbl:SetJustifyH("RIGHT")
             dd.label = lbl
         end
         return dd
@@ -6665,22 +8273,20 @@ GetOrCreateTmogWindow = function()
     local capMeasure = tmogFrame:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
     capMeasure:Hide()
     local LABEL_W = 0
-    for _, cap in ipairs({ RR.L["Exp:"], RR.L["Type:"], RR.L["Raid:"], RR.L["Boss:"], RR.L["Class:"] }) do
+    for _, cap in ipairs({ RR.L["Exp:"], RR.L["Type:"], RR.L["Inst:"], RR.L["Boss:"], RR.L["Class:"] }) do
         capMeasure:SetText(cap)
         local textWidth = capMeasure:GetStringWidth() or 0
         if textWidth > LABEL_W then LABEL_W = textWidth end
     end
     LABEL_W = math.ceil(LABEL_W)
-    -- The dropdown template frame has ~16px of non-visible left inset before
-    -- the bar's visible edge, so to put the VISIBLE bar at a target X we
-    -- offset the frame left by DD_INSET.
-    local DD_INSET   = 16
+    -- The bar's frame edge is its visible edge.
+    local DD_INSET   = 0
 
     local ddExp  = MakeDD("Expansion", 110, tmogFrame, RR.L["Exp:"])
     -- Raids-or-dungeons switch. Sits under the expansion bar so the
     -- cascade reads Exp -> Type -> Raid -> Boss -> Class.
     local ddType = MakeDD("InstanceKind", 110, tmogFrame, RR.L["Type:"])
-    local ddRaid = MakeDD("Raid",      185, tmogFrame, RR.L["Raid:"])
+    local ddRaid = MakeDD("Raid",      185, tmogFrame, RR.L["Inst:"])
     local ddBoss = MakeDD("Boss",      185, tmogFrame, RR.L["Boss:"])
 
     -- Bars: stacked, each stepped slightly right of the one above so the
@@ -6690,21 +8296,16 @@ GetOrCreateTmogWindow = function()
     local barLeft = barVisibleLeft - DD_INSET
     local DD_STEP = 5
     ddExp:SetPoint("TOPLEFT",  tmogFrame,     "TOPLEFT",     barLeft, -32)
-    ddType:SetPoint("TOPLEFT", ddExp, "BOTTOMLEFT",  DD_STEP,  4)
-    ddRaid:SetPoint("TOPLEFT", ddType, "BOTTOMLEFT", DD_STEP,  4)
-    ddBoss:SetPoint("TOPLEFT", ddRaid, "BOTTOMLEFT", DD_STEP,  4)
+    ddType:SetPoint("TOPLEFT", ddExp, "BOTTOMLEFT",  DD_STEP,  -2)
+    ddRaid:SetPoint("TOPLEFT", ddType, "BOTTOMLEFT", DD_STEP,  -2)
+    ddBoss:SetPoint("TOPLEFT", ddRaid, "BOTTOMLEFT", DD_STEP,  -2)
 
     -- Labels: anchored to each bar's own left edge with a fixed gap, so
-    -- they cascade rightward in step with the indented bars. The dropdown
-    -- frame has DD_INSET of invisible padding before its visible bar, so
-    -- offset the caption's right edge out to (frame LEFT + DD_INSET) minus
-    -- the gap -- that lands the caption the same distance from the visible
-    -- bar as before, at every indent depth.
+    -- they cascade rightward in step with the indented bars.
     local function anchorLabel(dd)
         if not dd.label then return end
         dd.label:ClearAllPoints()
-        dd.label:SetPoint("RIGHT", dd, "LEFT", DD_INSET - LABEL_GAP, 2)
-        dd.label:SetPoint("TOP",  dd, "TOP",  0, -6)
+        dd.label:SetPoint("RIGHT", dd, "LEFT", DD_INSET - LABEL_GAP, 0)
         dd.label:SetWidth(LABEL_W)
     end
     anchorLabel(ddExp); anchorLabel(ddType); anchorLabel(ddRaid); anchorLabel(ddBoss)
@@ -6719,9 +8320,259 @@ GetOrCreateTmogWindow = function()
     -- localized name in its class color, plus "All classes". Defaults to the
     -- class being played.
     local ddClass = MakeDD("Class", 110, tmogFrame, RR.L["Class:"])
-    ddClass:SetPoint("TOPLEFT", ddBoss, "BOTTOMLEFT", DD_STEP, 4)
+    ddClass:SetPoint("TOPLEFT", ddBoss, "BOTTOMLEFT", DD_STEP, -2)
     anchorLabel(ddClass)
     tmogFrame.ddClass = ddClass
+
+    -- Search: a magnifying-glass button after the title toggles a floating
+    -- input over the dropdown stack. Matches expansion, item, boss, and
+    -- instance names across raids and dungeons; picking a result drives
+    -- the dropdowns to it.
+    do
+        local searchIcon = CreateFrame("Button", nil, tmogFrame)
+        searchIcon:SetSize(20, 20)
+        -- Dropped 2px: the title's glyphs sit low in their box, so a true
+        -- LEFT-RIGHT center reads high next to them.
+        searchIcon:SetPoint("LEFT", title, "RIGHT", 6, -2)
+        searchIcon:SetNormalTexture("Interface\\Common\\UI-Searchbox-Icon")
+        searchIcon:SetHighlightTexture("Interface\\Common\\UI-Searchbox-Icon",
+            "ADD")
+        local iconTexture = searchIcon:GetNormalTexture()
+        if iconTexture then
+            iconTexture:SetVertexColor(0.95, 0.35, 0.78)
+        end
+        UI.AttachSearchSparkle(searchIcon)
+        tmogFrame.searchIcon = searchIcon
+
+        local searchBox = CreateFrame("EditBox", "RetroRunsTmogSearchBox",
+            tmogFrame, "InputBoxTemplate")
+        searchBox:SetAutoFocus(false)
+        searchBox:SetSize(160, 20)
+        -- On the title bar, right of the glass. The input template's left
+        -- texture extends ~8px past the frame, so the gap is authored wide.
+        searchBox:SetPoint("LEFT", searchIcon, "RIGHT", 12, 2)
+        searchBox:SetFrameLevel(tmogFrame:GetFrameLevel() + 40)
+        searchBox:SetMaxLetters(60)
+        -- Dim placeholder naming the scope; clears as soon as anything is
+        -- typed.
+        searchBox.hint = searchBox:CreateFontString(nil, "OVERLAY",
+            "GameFontDisableSmall")
+        searchBox.hint:SetPoint("LEFT", 2, 0)
+        searchBox.hint:SetText(RR.L["Search for Tmog"])
+        searchBox:Hide()
+        searchBox:HookScript("OnEnter", CancelTmogHide)
+        searchBox:HookScript("OnLeave", ScheduleTmogHide)
+        tmogFrame.searchBox = searchBox
+
+        local function CloseSearch()
+            searchBox:SetText("")
+            searchBox:ClearFocus()
+            searchBox:Hide()
+            tmogFrame.searchResults:Hide()
+        end
+        searchIcon:SetScript("OnClick", function()
+            if searchBox:IsShown() then
+                CloseSearch()
+            else
+                searchBox:Show()
+                searchBox:SetFocus()
+            end
+        end)
+        searchIcon:SetScript("OnEnter", function(self)
+            CancelTmogHide()
+            -- Suppressed once the box is open; see the minimized bar's copy.
+            if searchBox:IsShown() then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(RR.L["Search"], 1, 1, 1)
+            GameTooltip:Show()
+        end)
+        searchIcon:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+            ScheduleTmogHide()
+        end)
+
+        -- Result list floats over the content region, dropdown-style.
+        local results = CreateFrame("Frame", nil, tmogFrame,
+            "BackdropTemplate")
+        results:SetBackdrop({
+            bgFile   = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 16,
+            insets = { left = 3, right = 3, top = 3, bottom = 3 },
+        })
+        results:SetBackdropColor(0.05, 0.05, 0.05, 0.97)
+        results:SetPoint("TOPLEFT", searchBox, "BOTTOMLEFT", -6, -2)
+        results:SetFrameLevel(tmogFrame:GetFrameLevel() + 40)
+        results:EnableMouse(true)
+        results:Hide()
+        results:HookScript("OnEnter", CancelTmogHide)
+        results:HookScript("OnLeave", ScheduleTmogHide)
+        tmogFrame.searchResults = results
+
+        local RESULT_MAX = 8
+        local RESULT_ROW_H = 16
+        local RESULT_PAD = 8
+        local rowButtons = {}
+        -- One trailing line serves both the overflow count and the
+        -- no-matches state.
+        local footLine = results:CreateFontString(nil, "OVERLAY",
+            "GameFontDisableSmall")
+        footLine:SetJustifyH("LEFT")
+        footLine:Hide()
+
+        local function SelectSearchResult(entry)
+            browserState.instanceKind = entry.instanceKind
+            browserState.expansion    = entry.expansion
+            browserState.raidKey      = entry.key
+            browserState.bossIndex    = entry.bossIndex or 1
+            -- A result inside a collapsed section opens that section, so
+            -- the row the jump lands on is actually visible.
+            if entry.section == "trash" then
+                tmogFrame._trashExpanded = true
+            elseif entry.section == "legacy" then
+                tmogFrame._legacyExpanded = true
+            elseif entry.section == "hardmode" then
+                tmogFrame._hardmodeExpanded = true
+            elseif entry.section == "faction" then
+                tmogFrame._factionExpanded = true
+                tmogFrame._factionTierExpanded = true
+            end
+            -- A class-gated result switches the class filter when the
+            -- current view would hide it. Equip-gated rows skip the switch
+            -- when the viewed class wears nothing in the target list --
+            -- the exemption already shows every row there.
+            local classGate = entry.itemClasses or entry.itemEquipClasses
+            if classGate then
+                local filterClass = ActiveClassFilter()
+                local rowVisible = not filterClass
+                if filterClass then
+                    for _, classID in ipairs(classGate) do
+                        if classID == filterClass then
+                            rowVisible = true
+                            break
+                        end
+                    end
+                end
+                if not rowVisible and entry.itemEquipClasses
+                   and not entry.itemClasses then
+                    local instance = UI.BrowserInstanceByKey(entry.key)
+                    local lootList
+                    if entry.section == "trash" then
+                        lootList = instance and instance.trashLoot
+                    else
+                        local boss = instance and instance.bosses
+                                     and instance.bosses[entry.bossIndex]
+                        lootList = boss and boss.loot
+                    end
+                    if UI.EquipGateExemptFor(lootList, filterClass) then
+                        rowVisible = true
+                    end
+                end
+                if not rowVisible then
+                    browserState.classFilter = classGate[1]
+                end
+            end
+            tmogFrame._searchHighlight = entry.itemID
+                and { itemID = entry.itemID } or nil
+            CloseSearch()
+            tmogFrame:RefreshAll()
+        end
+        -- The panel's in-run search lands a picked result here, so a jump
+        -- from either glass takes the same path.
+        tmogFrame.SelectSearchEntry = SelectSearchResult
+
+        local function GetResultButton(idx)
+            local btn = rowButtons[idx]
+            if btn then return btn end
+            btn = CreateFrame("Button", nil, results)
+            btn:SetHeight(RESULT_ROW_H)
+            btn:SetPoint("TOPLEFT", results, "TOPLEFT", RESULT_PAD,
+                -RESULT_PAD - (idx - 1) * RESULT_ROW_H)
+            btn:SetPoint("RIGHT", results, "RIGHT", -RESULT_PAD, 0)
+            local btnText = btn:CreateFontString(nil, "OVERLAY",
+                "GameFontHighlightSmall")
+            btnText:SetPoint("LEFT", 0, 0)
+            btnText:SetJustifyH("LEFT")
+            btn.text = btnText
+            local highlightTex = btn:CreateTexture(nil, "HIGHLIGHT")
+            highlightTex:SetAllPoints()
+            highlightTex:SetColorTexture(1, 1, 1, 0.08)
+            btn:SetScript("OnClick", function(self)
+                if self.entry then SelectSearchResult(self.entry) end
+            end)
+            btn:HookScript("OnEnter", CancelTmogHide)
+            btn:HookScript("OnLeave", ScheduleTmogHide)
+            rowButtons[idx] = btn
+            return btn
+        end
+
+        local function UpdateSearchResults()
+            local matches, overflow =
+                UI.QueryTmogSearch(searchBox:GetText(), RESULT_MAX)
+            for _, btn in ipairs(rowButtons) do
+                btn:Hide()
+                btn.entry = nil
+            end
+            footLine:Hide()
+            if not matches then
+                results:Hide()
+                return
+            end
+            local widest = 0
+            local shown = 0
+            for idx, entry in ipairs(matches) do
+                local btn = GetResultButton(idx)
+                btn.entry = entry
+                btn.text:SetText(entry.display)
+                btn:Show()
+                local textWidth = btn.text:GetStringWidth() or 0
+                if textWidth > widest then widest = textWidth end
+                shown = idx
+            end
+            local lines = shown
+            local footText
+            if shown == 0 then
+                footText = RR.L["No matches."]
+            elseif overflow > 0 then
+                footText = (RR.L["+%d more"]):format(overflow)
+            end
+            if footText then
+                footLine:SetText(footText)
+                footLine:ClearAllPoints()
+                footLine:SetPoint("TOPLEFT", results, "TOPLEFT", RESULT_PAD,
+                    -RESULT_PAD - shown * RESULT_ROW_H)
+                footLine:Show()
+                local textWidth = footLine:GetStringWidth() or 0
+                if textWidth > widest then widest = textWidth end
+                lines = lines + 1
+            end
+            results:SetSize(
+                math.min(360, math.max(searchBox:GetWidth() + 12,
+                    widest + RESULT_PAD * 2 + 4)),
+                lines * RESULT_ROW_H + RESULT_PAD * 2)
+            results:Show()
+        end
+
+        searchBox:SetScript("OnTextChanged", function(self, userInput)
+            -- Unconditional, for the same reason as the instance search.
+            self.hint:SetShown(self:GetText() == "")
+            if userInput then UpdateSearchResults() end
+        end)
+        searchBox:SetScript("OnEscapePressed", CloseSearch)
+        searchBox:SetScript("OnEnterPressed", function()
+            local firstBtn = rowButtons[1]
+            if firstBtn and firstBtn:IsShown() and firstBtn.entry then
+                SelectSearchResult(firstBtn.entry)
+            end
+        end)
+        tmogFrame:HookScript("OnHide", function()
+            CloseSearch()
+            tmogFrame._searchHighlight = nil
+            if tmogFrame.searchHighlightBand then
+                tmogFrame.searchHighlightBand:Hide()
+            end
+        end)
+    end
 
     -- Sizes each dropdown bar by MEASURING its widest candidate with a hidden
     -- FontString at the dropdown's own font, plus padding. Expansion measures
@@ -6729,6 +8580,10 @@ GetOrCreateTmogWindow = function()
     -- data yet. Re-runnable on every RefreshDropdowns.
     local measureFS = tmogFrame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     measureFS:Hide()
+    -- Measure at the bar's own font so the fit survives a template change.
+    if ddExp.Text and ddExp.Text.GetFontObject and ddExp.Text:GetFontObject() then
+        measureFS:SetFontObject(ddExp.Text:GetFontObject())
+    end
     local function widestStringWidth(strings)
         local maxW = 0
         for _, s in ipairs(strings) do
@@ -6740,12 +8595,9 @@ GetOrCreateTmogWindow = function()
     end
 
     tmogFrame.SizeDropdownsToContent = function(self)
-        -- ARROW_PAD covers the dropdown's right-side arrow button plus the
-        -- template's inner left/right text margins. UIDropDownMenu_SetWidth
-        -- sets the text region; the visible frame is wider, but the text that
-        -- must not clip is what we measure, so pad enough that the arrow never
-        -- overlaps the longest string.
-        local ARROW_PAD = 30
+        -- ARROW_PAD covers the bar's arrow plus its inner text margins, so
+        -- the arrow never overlaps the longest string.
+        local ARROW_PAD = 34
 
         -- Expansion: full constant list (future names included), measured
         -- as displayed -- the dropdown renders localized names where the
@@ -6787,10 +8639,10 @@ GetOrCreateTmogWindow = function()
         -- widths would look messy.
         local wide   = math.max(raidW, bossW)
         local narrow = math.max(expW, classW)
-        UIDropDownMenu_SetWidth(ddRaid,  math.ceil(wide)   + ARROW_PAD)
-        UIDropDownMenu_SetWidth(ddBoss,  math.ceil(wide)   + ARROW_PAD)
-        UIDropDownMenu_SetWidth(ddExp,   math.ceil(narrow) + ARROW_PAD)
-        UIDropDownMenu_SetWidth(ddClass, math.ceil(narrow) + ARROW_PAD)
+        ddRaid:SetWidth(math.ceil(wide)   + ARROW_PAD)
+        ddBoss:SetWidth(math.ceil(wide)   + ARROW_PAD)
+        ddExp:SetWidth(math.ceil(narrow) + ARROW_PAD)
+        ddClass:SetWidth(math.ceil(narrow) + ARROW_PAD)
     end
 
     -- Class display order for the dropdown: ascending class ID, matching the
@@ -6818,34 +8670,27 @@ GetOrCreateTmogWindow = function()
 
     tmogFrame.RefreshClassDropdown = function(self)
         local active = ActiveClassFilter()   -- nil = all classes
-        UIDropDownMenu_Initialize(ddClass, function()
+        ddClass:SetupMenu(function(_, rootDescription)
             -- "All classes" first.
-            local allInfo = UIDropDownMenu_CreateInfo()
-            allInfo.text    = RR.L["All classes"]
-            allInfo.value   = 0
-            allInfo.checked = (active == nil)
-            allInfo.func    = function()
-                browserState.classFilter = 0
-                if tmogFrame.RefreshAll then tmogFrame:RefreshAll() end
-            end
-            UIDropDownMenu_AddButton(allInfo)
-
-            for _, classID in ipairs(CLASS_FILTER_ORDER) do
-                local info = UIDropDownMenu_CreateInfo()
-                info.text    = ClassFilterLabel(classID)
-                info.value   = classID
-                info.checked = (active == classID)
-                info.func    = function()
-                    browserState.classFilter = classID
+            UI.MenuRadio(rootDescription, RR.L["All classes"],
+                function() return ActiveClassFilter() == nil end,
+                function()
+                    browserState.classFilter = 0
                     if tmogFrame.RefreshAll then tmogFrame:RefreshAll() end
-                end
-                UIDropDownMenu_AddButton(info)
+                end)
+            for _, classID in ipairs(CLASS_FILTER_ORDER) do
+                UI.MenuRadio(rootDescription, ClassFilterLabel(classID),
+                    function() return ActiveClassFilter() == classID end,
+                    function()
+                        browserState.classFilter = classID
+                        if tmogFrame.RefreshAll then tmogFrame:RefreshAll() end
+                    end)
             end
         end)
         if active == nil then
-            UIDropDownMenu_SetText(ddClass, RR.L["All classes"])
+            UI.SetDropdownText(ddClass, RR.L["All classes"])
         else
-            UIDropDownMenu_SetText(ddClass, ClassFilterLabel(active))
+            UI.SetDropdownText(ddClass, ClassFilterLabel(active))
         end
     end
 
@@ -6919,6 +8764,27 @@ GetOrCreateTmogWindow = function()
     scrollChild:SetSize(10, 10)   -- real size set per layout pass
     scroll:SetScrollChild(scrollChild)
     tmogFrame.contentChild = scrollChild
+
+    -- Search-jump highlight: a fading band behind the loot row a search
+    -- result landed on. The layout pass positions it; the fade clears it.
+    do
+        local band = scrollChild:CreateTexture(nil, "BACKGROUND")
+        band:SetColorTexture(UI.FLASH_BAND_R, UI.FLASH_BAND_G,
+            UI.FLASH_BAND_B, UI.FLASH_BAND_ALPHA)
+        band:Hide()
+        tmogFrame.searchHighlightBand = band
+        local fade = band:CreateAnimationGroup()
+        local fadeAlpha = fade:CreateAnimation("Alpha")
+        fadeAlpha:SetFromAlpha(1)
+        fadeAlpha:SetToAlpha(0)
+        fadeAlpha:SetStartDelay(UI.FLASH_FADE_DELAY)
+        fadeAlpha:SetDuration(UI.FLASH_FADE_DURATION)
+        fade:SetScript("OnFinished", function()
+            band:Hide()
+            tmogFrame._searchHighlight = nil
+        end)
+        tmogFrame.searchHighlightFade = fade
+    end
 
     -- The loot rows and sanctum line render into the scroll
     -- child, so item/achievement link clicks route through the child's
@@ -7045,6 +8911,33 @@ GetOrCreateTmogWindow = function()
     end)
     tmogFrame.trashToggle = trashToggle
 
+    -- Legacy-wing section. Same collapsible shape as Trash Drops, with a
+    -- data-authored label instead of a fixed one.
+    local legacyHeader = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    legacyHeader:SetJustifyH("LEFT")
+    legacyHeader:SetJustifyV("TOP")
+    legacyHeader:Hide()
+    tmogFrame.legacyHeader = legacyHeader
+
+    local legacyToggle = CreateFrame("Button", nil, scrollChild)
+    legacyToggle:RegisterForClicks("LeftButtonUp")
+    legacyToggle:SetFrameLevel((scrollChild:GetFrameLevel() or 0) + 10)
+    local legacyChevron = legacyToggle:CreateTexture(nil, "ARTWORK")
+    legacyChevron:SetAllPoints(legacyToggle)
+    legacyToggle._chevronTex = legacyChevron
+    local legacyChevronHL = legacyToggle:CreateTexture(nil, "HIGHLIGHT")
+    legacyChevronHL:SetAllPoints(legacyToggle)
+    legacyChevronHL:SetVertexColor(1, 1, 1, 0.3)
+    legacyToggle._chevronHL = legacyChevronHL
+    legacyToggle:Hide()
+    legacyToggle:HookScript("OnEnter", CancelTmogHide)
+    legacyToggle:HookScript("OnLeave", ScheduleTmogHide)
+    legacyToggle:SetScript("OnClick", function()
+        tmogFrame._legacyExpanded = not tmogFrame._legacyExpanded
+        tmogFrame:RefreshContent()
+    end)
+    tmogFrame.legacyToggle = legacyToggle
+
     -- "Tier / Token Info" subsection toggle: the same chevron pair, riding
     -- the gem divider that heads the subsection instead of a text header.
     local tierInfoToggle = CreateFrame("Button", nil, scrollChild)
@@ -7113,6 +9006,8 @@ GetOrCreateTmogWindow = function()
     end
     tmogFrame.hardmodeHeader, tmogFrame.hardmodeToggle =
         MakeSectionWidgets("_hardmodeExpanded")
+    tmogFrame.taggedHeader, tmogFrame.taggedToggle =
+        MakeSectionWidgets("_taggedExpanded")
     -- The opposite faction gets two sections: its tier beside the tier
     -- block, its ordinary drops at the foot. Separate widgets and separate
     -- expand flags, so folding one does not fold the other.
@@ -7193,15 +9088,13 @@ GetOrCreateTmogWindow = function()
         -- Type dropdown: raids or dungeons. Switching resets the selection
         -- into the new table; the expansion carries over when it exists
         -- there, otherwise falls to the first with content.
-        UIDropDownMenu_Initialize(ddType, function()
+        ddType:SetupMenu(function(_, rootDescription)
             for _, kindEntry in ipairs({ { "raid", RR.L["Raids"] },
                                          { "dungeon", RR.L["Dungeons"] } }) do
                 local kindValue, kindLabel = kindEntry[1], kindEntry[2]
-                local info = UIDropDownMenu_CreateInfo()
-                info.text = kindLabel
-                info.value = kindValue
-                info.checked = (browserState.instanceKind == kindValue)
-                info.func = function()
+                UI.MenuRadio(rootDescription, kindLabel,
+                function() return browserState.instanceKind == kindValue end,
+                function()
                     if browserState.instanceKind == kindValue then return end
                     browserState.instanceKind = kindValue
                     -- Select straight into the new table. A cleared key
@@ -7218,22 +9111,19 @@ GetOrCreateTmogWindow = function()
                     browserState.bossIndex = 1
                     SaveBrowserState()
                     tmogFrame:RefreshAll()
-                end
-                UIDropDownMenu_AddButton(info)
+                end)
             end
         end)
-        UIDropDownMenu_SetText(ddType,
+        UI.SetDropdownText(ddType,
             browserState.instanceKind == "dungeon" and RR.L["Dungeons"] or RR.L["Raids"])
 
         -- Expansion dropdown
-        UIDropDownMenu_Initialize(ddExp, function()
+        ddExp:SetupMenu(function(_, rootDescription)
             for _, expName in ipairs(expList) do
                 local n, s, t = CountExpansionLoot(expName, byExp)
-                local info = UIDropDownMenu_CreateInfo()
-                info.text = RR.L[expName] .. FormatCountSuffix(n, s, t)
-                info.value = expName
-                info.checked = (expName == browserState.expansion)
-                info.func = function()
+                UI.MenuRadio(rootDescription, RR.L[expName] .. FormatCountSuffix(n, s, t),
+                function() return expName == browserState.expansion end,
+                function()
                     if browserState.expansion == expName then return end
                     browserState.expansion = expName
                     -- Pick first raid + first boss in the new expansion.
@@ -7241,59 +9131,55 @@ GetOrCreateTmogWindow = function()
                     browserState.raidKey   = first and UI.BrowserKeyOf(first) or nil
                     browserState.bossIndex = 1
                     tmogFrame:RefreshAll()
-                end
-                UIDropDownMenu_AddButton(info)
+                end)
             end
         end)
-        UIDropDownMenu_SetText(ddExp, RR.L[browserState.expansion or "(none)"])
+        UI.SetDropdownText(ddExp, RR.L[browserState.expansion or "(none)"])
 
         -- Raid dropdown (within current expansion)
-        UIDropDownMenu_Initialize(ddRaid, function()
+        ddRaid:SetupMenu(function(_, rootDescription)
             local raids = byExp[browserState.expansion] or {}
             for _, raid in ipairs(raids) do
                 local n, s, t = CountRaidLoot(raid)
                 local entryKey = UI.BrowserKeyOf(raid)
-                local info = UIDropDownMenu_CreateInfo()
-                info.text = (RR:GetLocalizedRaidName(raid) or "?") .. FormatCountSuffix(n, s, t)
-                info.value = entryKey
-                info.checked = (entryKey == browserState.raidKey)
-                info.func = function()
-                    if browserState.raidKey == entryKey then return end
-                    browserState.raidKey   = entryKey
-                    browserState.bossIndex = 1
-                    tmogFrame:RefreshAll()
-                end
-                UIDropDownMenu_AddButton(info)
+                UI.MenuRadio(rootDescription, 
+                    (RR:GetLocalizedRaidName(raid) or "?") .. FormatCountSuffix(n, s, t),
+                    function() return entryKey == browserState.raidKey end,
+                    function()
+                        if browserState.raidKey == entryKey then return end
+                        browserState.raidKey   = entryKey
+                        browserState.bossIndex = 1
+                        tmogFrame:RefreshAll()
+                    end)
             end
         end)
         local raidName = "(none)"
         local selRaid = browserState.raidKey and UI.BrowserInstanceByKey(browserState.raidKey)
         if selRaid then raidName = RR:GetLocalizedRaidName(selRaid) or "?" end
-        UIDropDownMenu_SetText(ddRaid, raidName)
+        UI.SetDropdownText(ddRaid, raidName)
 
         -- Boss dropdown (within current raid)
-        UIDropDownMenu_Initialize(ddBoss, function()
+        ddBoss:SetupMenu(function(_, rootDescription)
             local raid = browserState.raidKey and UI.BrowserInstanceByKey(browserState.raidKey)
             if not raid or not raid.bosses then return end
             for idx, boss in ipairs(raid.bosses) do
                 local n, s, t = CountBossLoot(boss)
-                local info = UIDropDownMenu_CreateInfo()
-                info.text = (RR:GetLocalizedBossName(boss) or ("Boss " .. idx)) .. FormatCountSuffix(n or 0, s or 0, t or 0)
-                info.value = idx
-                info.checked = (idx == browserState.bossIndex)
-                info.func = function()
-                    if browserState.bossIndex == idx then return end
-                    browserState.bossIndex = idx
-                    UIDropDownMenu_SetText(ddBoss, RR:GetLocalizedBossName(boss) or ("Boss " .. idx))
-                    tmogFrame:RefreshContent()
-                end
-                UIDropDownMenu_AddButton(info)
+                UI.MenuRadio(rootDescription, 
+                    (RR:GetLocalizedBossName(boss) or ("Boss " .. idx))
+                        .. FormatCountSuffix(n or 0, s or 0, t or 0),
+                    function() return idx == browserState.bossIndex end,
+                    function()
+                        if browserState.bossIndex == idx then return end
+                        browserState.bossIndex = idx
+                        UI.SetDropdownText(ddBoss, RR:GetLocalizedBossName(boss) or ("Boss " .. idx))
+                        tmogFrame:RefreshContent()
+                    end)
             end
         end)
         local bossName = "(none)"
         local _, selBoss = GetBrowserSelection()
         if selBoss then bossName = RR:GetLocalizedBossName(selBoss) or "?" end
-        UIDropDownMenu_SetText(ddBoss, bossName)
+        UI.SetDropdownText(ddBoss, bossName)
 
         -- Fit the bars to their content (measured, not guessed).
         if self.SizeDropdownsToContent then self:SizeDropdownsToContent() end
@@ -7329,13 +9215,29 @@ GetOrCreateTmogWindow = function()
         -- collected/total counter: yellow while anything is missing,
         -- collected-green at 100%.
         local trashHeaderText
-        if detail.trashRows and (detail.trashTotal or 0) > 0 then
+        if detail.trashRows then
             local trashLabel = (RR.L["Trash Drops:"]):gsub("[:：]%s*$", "")
-            local trashCountHex = ((detail.trashCollected or 0) >= detail.trashTotal)
+            if (detail.trashTotal or 0) > 0 then
+                local trashCountHex = ((detail.trashCollected or 0) >= detail.trashTotal)
+                    and "00ff00" or "ffd100"
+                trashHeaderText = ("|cff%s%s|r |cff%s(%d/%d)|r"):format(
+                    C_LABEL, trashLabel, trashCountHex,
+                    detail.trashCollected or 0, detail.trashTotal)
+            else
+                -- Every row here is cross-listed and counted on its boss,
+                -- so the header keeps its name and drops the counter.
+                trashHeaderText = ("|cff%s%s|r"):format(C_LABEL, trashLabel)
+            end
+        end
+        -- Same counter treatment as trash, over the instance's own label.
+        local legacyHeaderText
+        if detail.legacyRows and (detail.legacyTotal or 0) > 0
+           and detail.legacyLabel then
+            local legacyCountHex = ((detail.legacyCollected or 0) >= detail.legacyTotal)
                 and "00ff00" or "ffd100"
-            trashHeaderText = ("|cff%s%s|r |cff%s(%d/%d)|r"):format(
-                C_LABEL, trashLabel, trashCountHex,
-                detail.trashCollected or 0, detail.trashTotal)
+            legacyHeaderText = ("|cff%s%s|r |cff%s(%d/%d)|r"):format(
+                C_LABEL, RR.L[detail.legacyLabel], legacyCountHex,
+                detail.legacyCollected or 0, detail.legacyTotal)
         end
         local factionLabel = (UnitFactionGroup
                 and UnitFactionGroup("player") == "Alliance")
@@ -7347,6 +9249,11 @@ GetOrCreateTmogWindow = function()
               header = self.hardmodeHeader, toggle = self.hardmodeToggle,
               flag = "_hardmodeExpanded", rows = detail.hardModeRows,
               label = ("|cff%s%s|r"):format(C_LABEL, RR.L["Hard Mode"]) },
+            { key = "tagged",
+              header = self.taggedHeader, toggle = self.taggedToggle,
+              flag = "_taggedExpanded", rows = detail.taggedRows,
+              label = ("|cff%s%s|r"):format(C_LABEL,
+                  RR.L[detail.taggedLabel or ""]) },
             { key = "factiontier",
               header = self.factionTierHeader, toggle = self.factionTierToggle,
               flag = "_factionTierExpanded", rows = detail.factionTierRows,
@@ -7359,6 +9266,10 @@ GetOrCreateTmogWindow = function()
               header = self.trashHeader, toggle = self.trashToggle,
               flag = "_trashExpanded", rows = detail.trashRows,
               label = trashHeaderText },
+            { key = "legacy",
+              header = self.legacyHeader, toggle = self.legacyToggle,
+              flag = "_legacyExpanded", rows = detail.legacyRows,
+              label = legacyHeaderText },
         }
 
         -- Measure pass over the lists that will actually render (a
@@ -7390,16 +9301,25 @@ GetOrCreateTmogWindow = function()
                     row.nameW      = MeasureText(row.name)
                     row.tagsW      = (row.tags and row.tags ~= "")
                                      and MeasureText(row.tags) or 0
-                    if row.isTier then
-                        if row.indicatorW > tierIndicatorW then
-                            tierIndicatorW = row.indicatorW
+                    -- Every item row is measured, because the pass below
+                    -- reads these widths unguarded. The caption borrows the
+                    -- columns, so it alone is kept out of the maxima.
+                    if not row.pairKey then
+                        if row.isTier then
+                            if row.indicatorW > tierIndicatorW then
+                                tierIndicatorW = row.indicatorW
+                            end
+                            if row.nameW > tierNameW then
+                                tierNameW = row.nameW
+                            end
+                        else
+                            if row.indicatorW > lootIndicatorW then
+                                lootIndicatorW = row.indicatorW
+                            end
+                            if row.nameW > lootNameW then
+                                lootNameW = row.nameW
+                            end
                         end
-                        if row.nameW > tierNameW then tierNameW = row.nameW end
-                    else
-                        if row.indicatorW > lootIndicatorW then
-                            lootIndicatorW = row.indicatorW
-                        end
-                        if row.nameW > lootNameW then lootNameW = row.nameW end
                     end
                 elseif row.kind == "text" and not row.soft then
                     -- Prose rows (footnotes, acquisition notes) are
@@ -7487,6 +9407,7 @@ GetOrCreateTmogWindow = function()
         local dividerIdx = 0
         local lastNameX = nameGap
         local sanctumPlaced = false
+        self._searchHighlightY = nil
         -- Positions the vendor hint (and its travel button) at the current
         -- y. Called from the "sanctum" marker row when the raid has tier,
         -- otherwise after the list.
@@ -7514,17 +9435,23 @@ GetOrCreateTmogWindow = function()
                 -- rendered ones. Anything anchored to the final line is
                 -- measured from the bottom of the block instead, which holds
                 -- however much the prose above it wrapped.
-                local lineTop
-                if hint and hint.buttonOnLastLine then
-                    lineTop = hintTop
-                        - (math.max(rowH, math.ceil(sanctumHeight)) - rowH)
-                else
-                    lineTop = hintTop - lineIndex * rowH
-                end
                 self.sanctumButton:ClearAllPoints()
-                self.sanctumButton:SetPoint("TOPLEFT", scrollChild, "TOPLEFT",
-                    MeasureText(lineText) + 4,
-                    lineTop - math.floor((rowH - btnSize) / 2))
+                if hint and hint.buttonOnLastLine then
+                    -- Anchored to the string's own BOTTOM. Deriving the last
+                    -- line's top from the block height assumed every rendered
+                    -- line was exactly rowH tall, which floated the plane
+                    -- above the text it belongs to once the prose wrapped.
+                    -- The plane is taller than a line, so it hangs half its
+                    -- excess below the baseline to sit centerd on it.
+                    self.sanctumButton:SetPoint("BOTTOMLEFT", self.sanctumLine,
+                        "BOTTOMLEFT", MeasureText(lineText) + 4,
+                        math.floor((rowH - btnSize) / 2))
+                else
+                    local lineTop = hintTop - lineIndex * rowH
+                    self.sanctumButton:SetPoint("TOPLEFT", scrollChild, "TOPLEFT",
+                        MeasureText(lineText) + 4,
+                        lineTop - math.floor((rowH - btnSize) / 2))
+                end
             end
             sanctumPlaced = true
         end
@@ -7557,7 +9484,7 @@ GetOrCreateTmogWindow = function()
                     end
                     y = y - UI.PlaceListDivider(divider, scrollChild, y,
                         ruleLeft, ruleW, rowH, labelText,
-                        MeasureText(labelText))
+                        MeasureText(labelText), row.subtle)
                 elseif row.kind == "tierinfo" then
                     -- Collapsible "Tier / Token Info" subsection: a titled
                     -- gem divider one font step smaller than the section
@@ -7621,22 +9548,57 @@ GetOrCreateTmogWindow = function()
                     local slot = GetTmogRowSlot(slotIdx)
                     local nameX = (row.colIndicatorW or row.indicatorW) + nameGap
                     local tagsX = nameX + (row.colNameW or row.nameW) + tagGap
+                    local indicatorText, tagsText = row.indicator, row.tags
+                    local indicatorX, drawTags = 0, (row.tagsW or 0) > 0
+                    if row.pairKey then
+                        -- A real row's indicator reads "[ dot | dot ]", so the
+                        -- dots sit a bracket in and a separator apart. The
+                        -- caption draws no brackets, so it offsets by those
+                        -- measured widths instead -- exact at any font size.
+                        -- The "=" hangs in the indicator/name gap so the words
+                        -- still begin on the name column.
+                        local dotGlyph = UI.ProgressDotGlyph(DOT_INACTIVE)
+                        -- Both widths probe as a difference against a
+                        -- sentinel: GetStringWidth drops leading and
+                        -- trailing spaces, so measuring "[ " or " || "
+                        -- directly loses the very spaces being measured.
+                        local sepW = math.max(1, math.floor(
+                            MeasureText("x || x") - MeasureText("xx") + 0.5)
+                            + UI.PAIRKEY_DOT_NUDGE)
+                        indicatorText = dotGlyph
+                            -- Texture escape takes HEIGHT then WIDTH.
+                            -- Height stays 1: a spacer taller than the
+                            -- line stretches the row.
+                            .. ("|TInterface\\Common\\Spacer:1:%d|t")
+                                :format(sepW)
+                            .. dotGlyph
+                        indicatorX = math.floor(
+                            MeasureText("[ x") - MeasureText("x") + 0.5)
+                        tagsText   = "|cff888888=|r"
+                        tagsX      = nameX - MeasureText("=") - spaceW
+                        drawTags   = true
+                    end
                     SetBodyFont(slot.indicator, renderedSize, "")
-                    slot.indicator:SetText(row.indicator)
+                    slot.indicator:SetText(indicatorText)
                     slot.indicator:ClearAllPoints()
-                    slot.indicator:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, y)
+                    slot.indicator:SetPoint("TOPLEFT", scrollChild, "TOPLEFT",
+                        indicatorX, y)
                     slot.indicator:Show()
                     SetBodyFont(slot.name, renderedSize, "")
                     slot.name:SetText(row.name)
                     slot.name:ClearAllPoints()
                     slot.name:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", nameX, y)
                     slot.name:Show()
-                    if row.tagsW > 0 then
+                    if drawTags then
                         SetBodyFont(slot.tags, renderedSize, "")
-                        slot.tags:SetText(row.tags)
+                        slot.tags:SetText(tagsText)
                         slot.tags:ClearAllPoints()
                         slot.tags:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", tagsX, y)
                         slot.tags:Show()
+                    end
+                    if self._searchHighlight
+                       and row.itemID == self._searchHighlight.itemID then
+                        self._searchHighlightY = y
                     end
                     lastNameX = nameX
                     y = y - rowH
@@ -7686,7 +9648,13 @@ GetOrCreateTmogWindow = function()
                                 detail.trashRows or {},
                                 detail.hardModeRows or {},
                                 detail.factionTierRows or {},
-                                detail.factionRows or {} }) do
+                                detail.factionRows or {},
+                                -- Every list that can carry the marker has to
+                                -- be here. A list left out reads as "no marker
+                                -- anywhere", and the hint is then placed by the
+                                -- fallback below -- above the sections rather
+                                -- than under the block that owns it.
+                                detail.legacyRows or {} }) do
             for _, row in ipairs(rows) do
                 if row.kind == "sanctum" then hasSanctumMarker = true end
             end
@@ -7718,6 +9686,29 @@ GetOrCreateTmogWindow = function()
             self.sanctumButton:Hide()
         end
 
+        -- Search-jump highlight band, re-placed on every layout while
+        -- active so async name fills cannot strand it on the wrong row.
+        -- The scroll snaps to the row once, on the first layout after the
+        -- jump; repaints leave the player's scroll position alone.
+        local searchHit = self._searchHighlight
+        local band = self.searchHighlightBand
+        if band then
+            if searchHit and self._searchHighlightY then
+                band:ClearAllPoints()
+                band:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0,
+                    self._searchHighlightY)
+                band:SetSize(viewportW, rowH)
+                band:Show()
+                if not searchHit.played then
+                    searchHit.played = true
+                    self._searchScrollTarget = -self._searchHighlightY
+                    self.searchHighlightFade:Play()
+                end
+            else
+                band:Hide()
+            end
+        end
+
         self.tmogContentH = -y
     end
 
@@ -7728,7 +9719,7 @@ GetOrCreateTmogWindow = function()
             detail = BuildTransmogDetail({ boss = boss })
         else
             detail = { mainRows = { { kind = "text",
-                text = RR.L["Select a raid and boss."] } } }
+                text = RR.L["Select an instance and boss."] } } }
         end
         local fontSize = RR:GetSetting("fontSize", 12)
         -- Record the layout inputs this render used, so the heartbeat's
@@ -7769,7 +9760,7 @@ GetOrCreateTmogWindow = function()
                     -- Waypoints cannot be placed from inside an instance,
                     -- so say so rather than routing into silence.
                     if IsInInstance and IsInInstance() then
-                        ShowWaypointToast(selfBtn, RR.L["Zone out first"])
+                        ShowWaypointToast(selfBtn, RR.L["Zone out first"], nil, nil, true)
                         return
                     end
                     if sanctumHint and sanctumHint.travel then
@@ -7790,22 +9781,27 @@ GetOrCreateTmogWindow = function()
                 sanctumBtn:SetScript("OnEnter", function(selfBtn)
                     CancelTmogHide()
                     GameTooltip:SetOwner(selfBtn, "ANCHOR_RIGHT")
-                    local travelName = (sanctumHint and sanctumHint.travel
-                            and sanctumHint.travel.vendorName)
-                        or sanctumVendor.vendorName
+                    -- A hint can carry its own destination with no vendor
+                    -- block behind it (the legacy-wing note names an object,
+                    -- not a merchant), so every sanctumVendor read is guarded.
+                    local hintTravel = sanctumHint and sanctumHint.travel
+                    local travelName = (hintTravel and hintTravel.vendorName)
+                        or (sanctumVendor and sanctumVendor.vendorName)
                     GameTooltip:SetText(
                         (RR.L["Travel to %s"]):format(
                             (travelName and RR.L[travelName])
                                 or RR.L["Sanctum vendor"]),
                         1, 1, 1)
-                    local spotSub = (sanctumHint and sanctumHint.travel
-                            and sanctumHint.travel.zoneSub)
-                        or sanctumVendor.zoneSub
-                    local tooltipSpot = spotSub
-                        and ("%s -- %s"):format(
-                            RR.L[spotSub],
-                            RR.L[sanctumVendor.zoneMain or ""])
-                        or RR.L[sanctumVendor.zoneMain or ""]
+                    local spotSub = (hintTravel and hintTravel.zoneSub)
+                        or (sanctumVendor and sanctumVendor.zoneSub)
+                    local zoneMain = sanctumVendor
+                        and RR.L[sanctumVendor.zoneMain or ""] or nil
+                    local tooltipSpot
+                    if spotSub and zoneMain and zoneMain ~= "" then
+                        tooltipSpot = ("%s -- %s"):format(RR.L[spotSub], zoneMain)
+                    else
+                        tooltipSpot = (spotSub and RR.L[spotSub]) or zoneMain
+                    end
                     if tooltipSpot and tooltipSpot ~= "" then
                         GameTooltip:AddLine(tooltipSpot, 0.7, 0.7, 0.7, true)
                     end
@@ -7842,7 +9838,7 @@ GetOrCreateTmogWindow = function()
         -- above it scrolls.
         SetBodyFont(legendLine, fontSize - 1, "")
         local legendText, legendLines =
-            BuildTmogLegendText(detail and detail.hasFactionPair)
+            BuildTmogLegendText()
         legendLine:SetText(legendText)
         -- The popup sizer reserves the footer from this, so it must be set
         -- before AutoSize runs at the end of this function.
@@ -7859,6 +9855,21 @@ GetOrCreateTmogWindow = function()
         end
         -- Fit the popup around the freshly laid-out content.
         UI.AutoSize()
+
+        -- Bring a search-jump's row into view, roughly a third down the
+        -- viewport. Runs after AutoSize so the scroll geometry is final.
+        if self._searchScrollTarget then
+            local scrollFrame = self.contentScroll
+            if scrollFrame then
+                local viewH = scrollFrame:GetHeight() or 0
+                local maxScroll = math.max(0,
+                    (self.tmogContentH or 0) - viewH)
+                scrollFrame:SetVerticalScroll(math.max(0,
+                    math.min(maxScroll,
+                        self._searchScrollTarget - viewH / 3)))
+            end
+            self._searchScrollTarget = nil
+        end
     end
 
     tmogFrame.RefreshAll = function(self)
@@ -7924,17 +9935,17 @@ GetOrCreateTmogWindow = function()
             end
         end
         if hasClassFiltered then
-            UIDropDownMenu_EnableDropDown(ddClass)
+            ddClass:SetEnabled(true)
             ddClass:SetAlpha(1.0)
             if ddClass.label then ddClass.label:SetAlpha(1.0) end
         else
-            UIDropDownMenu_DisableDropDown(ddClass)
+            ddClass:SetEnabled(false)
             ddClass:SetAlpha(0.45)
             if ddClass.label then ddClass.label:SetAlpha(0.45) end
             -- Replace the class name with an explicit unavailable marker so a
             -- disabled bar doesn't read as a still-selectable class. Runs
             -- after RefreshClassDropdown sets the name, so this wins.
-            UIDropDownMenu_SetText(ddClass, "N/A")
+            UI.SetDropdownText(ddClass, "N/A")
         end
     end
 
@@ -7976,13 +9987,51 @@ function UI.RefreshTmogWindowIfShown()
     end
 end
 
--- Update the centered footer "Toaster:" arrow to match the live state:
--- green up = active (enabled + in a supported raid), amber down = enabled but
--- not in a supported raid, red down = disabled. Mirrors the settings panel's
--- Active Status so both surfaces agree. Safe to call any time.
-function UI.RefreshFooterToasterStatus()
-    local toastStatus = panel.toastStatus
+-- Repaint the footer's center slot. While a run is being guided it carries
+-- the "Toaster:" arrow -- green up = active (enabled + in a supported raid),
+-- amber down = enabled but not in a supported raid, red down = disabled,
+-- mirroring the settings panel's Active Status so both surfaces agree. On
+-- the instance list it carries the hourly instance-limit counter instead.
+-- Safe to call any time.
+function UI.RefreshFooterStatus()
+    local toastStatus   = panel.toastStatus
+    local instanceLimit = panel.instanceLimit
     if not toastStatus or not toastStatus.arrow then return end
+
+    -- There is no footer on the minimized bar. This runs on the heartbeat,
+    -- so without the guard it shows the slot back over the bar every tick
+    -- no matter what the minimize path hid.
+    if UI.IsMinimized and UI.IsMinimized() then
+        if instanceLimit then instanceLimit:Hide() end
+        toastStatus:Hide()
+        return
+    end
+
+    if instanceLimit and UI.IsShowingInstanceList and UI.IsShowingInstanceList() then
+        toastStatus:Hide()
+        local usedCount, freeSeconds, capLimit = RR:GetInstanceUseCount()
+        -- Urgency colors the count on the headroom left, not on the count
+        -- itself, so the reading matches the run-complete reset reminder.
+        local remainingCount = math.max(0, capLimit - usedCount)
+        local countColor = (remainingCount >= 5 and "|cff00ff00")
+            or (remainingCount >= 2 and "|cffffff00")
+            or "|cffff0000"
+        -- No entries means nothing to expire, so the parenthetical drops
+        -- rather than rendering a reset for a clock that is not running.
+        local valueText = ("%s%d|r|cff9d9d9d/%d|r")
+            :format(countColor, usedCount, capLimit)
+        if freeSeconds then
+            valueText = valueText .. ("|cff9d9d9d (%dm)|r")
+                :format(math.ceil(freeSeconds / 60))
+        end
+        instanceLimit.value:SetText(valueText)
+        instanceLimit.Layout()
+        instanceLimit:Show()
+        return
+    end
+
+    if instanceLimit then instanceLimit:Hide() end
+    toastStatus:Show()
     local enabled = RR:GetSetting("toasterEnabled", false) ~= false
     local inRaid  = RR.currentRaid ~= nil
     local color, up
@@ -8017,8 +10066,10 @@ function UI.OpenTransmogBrowser()
     window:SetScale(scale)
     -- Collapsible sections always open collapsed.
     window._trashExpanded = false
+    window._legacyExpanded = false
     window._tierInfoExpanded = false
     window._hardmodeExpanded = false
+    window._taggedExpanded = false
     window._factionTierExpanded = false
     window._factionExpanded = false
     window:RefreshAll()
@@ -8028,6 +10079,16 @@ function UI.OpenTransmogBrowser()
     -- briefly shows through before the AutoSize inside RefreshAll's height
     -- takes effect.
     UI.AutoSize()
+end
+
+--- Opens the browser on a picked search entry. The panel's in-run search
+--- hands its result here; the browser's own search selects in place.
+function UI.JumpToTmogEntry(entry)
+    if not entry then return end
+    UI.OpenTransmogBrowser()
+    if tmogWindow and tmogWindow.SelectSearchEntry then
+        tmogWindow.SelectSearchEntry(entry)
+    end
 end
 
 -- Toggle variant for "/rr tmog" when called twice in a row.
@@ -8174,21 +10235,137 @@ local SKIP_MARKER_LED      = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_
 -- legend star's apparent size at the default font.
 local SKIP_MARKER_ROW      = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:10:10|t"
 local SKIP_MARKER_ROW_DIM  = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:10:10:0:0:64:64:0:64:0:64:80:80:80|t"
-local SKIP_MARKER_ROW_NONE = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:10:10:0:0:64:64:0:64:0:64:0:0:0:0|t"
+local SKIP_MARKER_ROW_NONE = "|TInterface\\Common\\Spacer:10:10|t"
+-- Current-season marker for a dungeon row, in the column the raid rows
+-- give their skip star: a clock face -- a solid white disc with its hands
+-- cut out, so the panel shows through them. Drawn in the texture's own
+-- white; the source is authored white at 64x64, so a trailing r:g:b
+-- triple can tint it later without re-authoring. Hands are deliberately
+-- heavy for the size -- see Media/ClockIcon.tga's generator.
+-- An "M+" tag in the same voice as the Timewalking "TW", and sharing its
+-- column -- self-explanatory, so it carries no legend line. Same
+-- pixel-mapped art rules as the TW tag: 24x12, two-pixel strokes, and the
+-- 96x48 crop are part of the art (generate_twtag.py).
+-- Dungeon rows seat the tag at yoffset 0; the raid rows' line metrics
+-- differ (their leading carries other 12px glyphs) and need -1. The TW
+-- tag takes the same split through TimewalkingTag's parameter.
+UI.SEASONAL_MARKER_GLYPH   = "|TInterface\\AddOns\\RetroRuns\\Media\\MPlusTagIcon:12:24:0:0:128:64:0:96:0:48|t"
+-- Timewalking's marker: an hourglass, its own art rather than a second use
+-- of the seasonal clock. Kept as its own constant so the two can never be
+-- changed by one edit.
+-- The 0:-2 is a y offset dropping the glyph onto the text baseline; with
+-- no offset an inline texture rides high against the line it sits in.
+UI.TIMEWALKING_MARKER_GLYPH = "|TInterface\\AddOns\\RetroRuns\\Media\\HourglassIcon:12:12:0:-1|t"
+-- Width the marker occupies at the end of a header string, for placing the
+-- hover region over the glyph rather than over the whole heading.
+UI.TIMEWALKING_MARKER_W = 13
 
+-- The "TW" tag at the current urgency tint. A texture because FontStrings
+-- cannot shrink a substring; 16x8 and the full-canvas crop are part of the
+-- art -- the tag is pixel-mapped at exactly that size and goes muddy at any
+-- other (generate_twtag.py). A tag rather than the hourglass: the hourglass
+-- belongs to the expansion header, and a live week would otherwise stack
+-- seven of them down one column.
+function UI.TimewalkingTag(yOffset)
+    local days = RR:GetTimewalkingEnd()
+    local tint = UI.TIMEWALKING_TINT_OK
+    if days and days <= UI.TIMEWALKING_DAYS_LAST then
+        tint = UI.TIMEWALKING_TINT_LAST
+    elseif days and days <= UI.TIMEWALKING_DAYS_SOON then
+        tint = UI.TIMEWALKING_TINT_SOON
+    end
+    return ("|TInterface\\AddOns\\RetroRuns\\Media\\TWTagIcon:12:24:0:%d:128:64:0:96:0:48:%s|t")
+        :format(yOffset or 0, tint)
+end
+
+-- The tag column on an instance row: a fixed-width slot just left of the
+-- name (and, on dungeon rows, the plane gutter) holding whichever tag the
+-- row earns, so TW and M+ stack in one column rather than two -- and the
+-- raid and dungeon lists carry the tag in the same position. All texture,
+-- no text space -- a font-sized space would put the alignment at the
+-- mercy of the font. Reserved on EVERY row of a list while any week is
+-- live, blank where a row earns neither tag, so the name and plane
+-- columns never move as the season or the Timewalking week rotates.
+--
+-- TW wins a row that is both: the week is the perishable half, and the
+-- Mythic+ season outlives it by months.
+function UI.InstanceTagSlot(instance)
+    local tag
+    if instance and RR:IsTimewalkingLive(instance) then
+        -- Raid rows seat the tag a pixel lower than dungeon rows; see
+        -- the SEASONAL_MARKER_GLYPH note.
+        tag = UI.TimewalkingTag(
+            instance.kind ~= "dungeon" and -1 or 0)
+    elseif instance and RR:IsSeasonalDungeon(instance) then
+        tag = UI.SEASONAL_MARKER_GLYPH
+    end
+    if not tag then
+        return ("|TInterface\\Common\\Spacer:10:%d|t")
+            :format(UI.INSTANCE_TAG_SLOT_W)
+    end
+    return tag .. ("|TInterface\\Common\\Spacer:10:%d|t")
+        :format(UI.INSTANCE_TAG_SLOT_W - 24)
+end
+-- Width the slot adds ahead of the plane gutter: the 24px tag plus 2px of
+-- breathing room. The plane button anchors at a FIXED inset on the row, so
+-- the same number moves the plane over -- keep the two in step through
+-- this constant.
+UI.INSTANCE_TAG_SLOT_W = 26
+
+-- A raid row's Timewalking tag, trailing the name with a gap, while the
+-- raid's week is live; nothing otherwise. Raid rows reserve no slot.
+function UI.RaidTag(raid)
+    if raid and RR:IsTimewalkingLive(raid) then
+        return "  " .. UI.TimewalkingTag(-1)
+    end
+    return ""
+end
+
+-- Urgency tint: many appearances are Timewalking-only, so how much of the
+-- week is left is real information, not decoration. The asset is white, so
+-- the trailing R:G:B tints it (same mechanism as PlaneIcon / StatusDot).
+-- Thresholds are in DAYS REMAINING and the event runs about a week.
+UI.TIMEWALKING_TINT_OK    = "0:255:0"
+UI.TIMEWALKING_TINT_SOON  = "255:255:0"
+UI.TIMEWALKING_TINT_LAST  = "255:0:0"
+UI.TIMEWALKING_DAYS_SOON  = 3        -- at or under this, amber
+UI.TIMEWALKING_DAYS_LAST  = 1        -- at or under this, red
+
+-- The marker at the urgency for `days` remaining; plain white when the end
+-- date could not be read, so an unknown never reads as urgent.
+function UI.TimewalkingMarker(days)
+    if not days then return UI.TIMEWALKING_MARKER_GLYPH end
+    local tint = UI.TIMEWALKING_TINT_OK
+    if days <= UI.TIMEWALKING_DAYS_LAST then
+        tint = UI.TIMEWALKING_TINT_LAST
+    elseif days <= UI.TIMEWALKING_DAYS_SOON then
+        tint = UI.TIMEWALKING_TINT_SOON
+    end
+    return ("|TInterface\\AddOns\\RetroRuns\\Media\\HourglassIcon:12:12:0:-1:64:64:0:64:0:64:%s|t")
+        :format(tint)
+end
 -- Inline texture marker matching the entrance-navigation buttons (the
 -- custom PlaneIcon, tinted RETRO pink via the extended texture-markup
 -- RGB params 242,89,199 = the 0.95/0.35/0.78 brand pink scaled to 0-255).
 -- The full-texture coords (0:64:0:64) plus trailing R:G:B tint the white
 -- silhouette without cropping it.
-local ENTRANCE_MARKER =
-    "|TInterface\\AddOns\\RetroRuns\\Media\\PlaneIcon:12:12:0:0:64:64:0:64:0:64:242:89:199|t"
+--
+-- Sized off the body font the same way PositionEntranceButton sizes the
+-- real buttons, so the legend's plane and the planes it explains are the
+-- same size at any font setting. NOT the legend's own smaller font: the
+-- point of the line is that this glyph is that button.
+local function EntranceMarker()
+    local size = math.floor(RR:GetSetting("fontSize", 12) * 1.4)
+    return ("|TInterface\\AddOns\\RetroRuns\\Media\\PlaneIcon:%d:%d:0:0:64:64:0:64:0:64:242:89:199|t")
+        :format(size, size)
+end
 
 -- Skip-legend footer line. Explains the gold star; dim and invisible
 -- variants don't need explicit legend coverage.
 local IDLE_SKIP_LEGEND =
     "|cff9d9d9d" .. SKIP_MARKER_LED .. " = " .. RR.L["skip unlocked -- check Skips for details"] .. "|r"
 
+-- Dungeon-list counterpart, in the slot the skip legend takes for raids.
 -- Footer legend below the supported-raids list. Two lines:
 --   Routing: <Zygor|Mapzeroth|None> [with AWP Orchestration]
 --   Waypoint: <TomTom|Native> [with 3D Overlay from <names>]
@@ -8609,14 +10786,25 @@ local function GetSkipsRowSlot(parent, idx)
         slot.divider:SetSnapToPixelGrid(false)
     end
 
-    -- Active-raid highlight + left accent bar. Same shape as the
-    -- achievements window's current-boss highlight: a BORDER-layer
-    -- tinted band spanning the row's width, plus a 3px-wide solid
-    -- cyan vertical bar at the left edge. Shown on the raidRow whose
-    -- instanceID matches RR.currentRaid (i.e., the player is in that
-    -- raid right now).
+    -- Active-raid band + left accent bar. Same shape and shared flash as
+    -- the achievements window's current-boss band: a BORDER-layer tint
+    -- spanning the row's width that shows bright and fades out, plus a
+    -- 3px-wide solid cyan vertical bar at the left edge that stays as
+    -- the persistent marker. Shown on the raidRow whose instanceID
+    -- matches RR.currentRaid (i.e., the player is in that raid right now).
     slot.highlight = parent:CreateTexture(nil, "BORDER")
-    slot.highlight:SetColorTexture(0.30, 0.65, 1.0, 0.22)
+    slot.highlight:SetColorTexture(UI.FLASH_BAND_R, UI.FLASH_BAND_G,
+        UI.FLASH_BAND_B, UI.FLASH_BAND_ALPHA)
+    slot.highlightFade = slot.highlight:CreateAnimationGroup()
+    local highlightAlpha = slot.highlightFade:CreateAnimation("Alpha")
+    highlightAlpha:SetFromAlpha(1)
+    highlightAlpha:SetToAlpha(0)
+    highlightAlpha:SetStartDelay(UI.FLASH_FADE_DELAY)
+    highlightAlpha:SetDuration(UI.FLASH_FADE_DURATION)
+    local highlightTexture = slot.highlight
+    slot.highlightFade:SetScript("OnFinished", function()
+        highlightTexture:Hide()
+    end)
     slot.accent = parent:CreateTexture(nil, "BORDER")
     slot.accent:SetColorTexture(0.45, 0.80, 1.0, 1.0)
     slot.accent:SetWidth(3)
@@ -8678,6 +10866,20 @@ local function RefreshSkipsContent()
 
     HideAllSkipsSlots()
     ReleaseSkipsToggleButtons()
+
+    -- Active-raid band flash: re-arms when the current raid changes (and
+    -- on window open, which clears the key). Same bookkeeping as the
+    -- achievements window's current-boss flash.
+    local flashKey = RR.currentRaid and RR.currentRaid.instanceID or nil
+    local flashRestart = false
+    if window._raidFlashKey ~= flashKey then
+        window._raidFlashKey = flashKey
+        window._raidFlashUntil = flashKey
+            and (GetTime() + UI.FLASH_FADE_DELAY + UI.FLASH_FADE_DURATION)
+            or 0
+        flashRestart = flashKey ~= nil
+    end
+    local flashActive = (window._raidFlashUntil or 0) > GetTime()
 
     local rows = BuildSkipsRows()
     local fontSize = RR:GetSetting("fontSize", 12)
@@ -8759,14 +10961,26 @@ local function RefreshSkipsContent()
             slot.name:SetWidth(SKIPS_COL_INFO_X - SKIPS_COL_NAME_X - 8)
             slot.name:Show()
 
-            -- Active-raid highlight, compared by instanceID rather than table
+            -- Active-raid band, compared by instanceID rather than table
             -- reference so the faction-specific BfD tables both match.
+            -- The band only shows during the flash window and fades out;
+            -- the accent bar stays as the persistent marker.
             if RR.currentRaid and row.raidRef
                and row.raidRef.instanceID == RR.currentRaid.instanceID then
-                slot.highlight:ClearAllPoints()
-                slot.highlight:SetPoint("TOPLEFT",     window, "TOPLEFT",  4,  y + 2)
-                slot.highlight:SetPoint("BOTTOMRIGHT", window, "TOPRIGHT", -4, y - lineHeight + 4)
-                slot.highlight:Show()
+                if flashActive then
+                    slot.highlight:ClearAllPoints()
+                    slot.highlight:SetPoint("TOPLEFT",     window, "TOPLEFT",  4,  y + 2)
+                    slot.highlight:SetPoint("BOTTOMRIGHT", window, "TOPRIGHT", -4, y - lineHeight + 4)
+                    slot.highlight:Show()
+                    -- A mid-fade rebuild keeps a running animation;
+                    -- restart on a new flash, or when this slot's
+                    -- animation is not the one carrying it (rebuilds can
+                    -- move the row to another pooled slot).
+                    if flashRestart or not slot.highlightFade:IsPlaying() then
+                        slot.highlightFade:Stop()
+                        slot.highlightFade:Play()
+                    end
+                end
 
                 slot.accent:ClearAllPoints()
                 slot.accent:SetPoint("TOPLEFT",    window, "TOPLEFT", 4, y + 2)
@@ -8963,7 +11177,7 @@ GetOrCreateSkipsWindow = function()
     title:SetShadowOffset(1, -1)
     title:SetShadowColor(0, 0, 0, 1)
 
-    local closeBtn = CreateFrame("Button", nil, skipsFrame, "UIPanelCloseButton")
+    local closeBtn = UI.MakeRetroCloseButton(skipsFrame)
     closeBtn:SetPoint("TOPRIGHT", -4, -4)
     closeBtn:SetScript("OnClick", function() skipsFrame:Hide() end)
 
@@ -9026,6 +11240,28 @@ GetOrCreateSkipsWindow = function()
 
     skipsFrame.RefreshContent = RefreshSkipsContent
 
+    -- Live refresh on a skip-quest turn-in. Without this the window only
+    -- rebuilds when it is opened, so a skip earned while it was on screen
+    -- kept showing Locked until the player closed and reopened it.
+    --
+    -- QUEST_TURNED_IN fires before the account-wide flag
+    -- IsQuestFlaggedCompletedOnAccount reports the completion, so a single
+    -- refresh on the event can read the old value and change nothing. The
+    -- retries cover that lag the same way the kill-sync path does; they are
+    -- cheap because each is one table walk over a handful of quest IDs, and
+    -- they only run while the window is shown.
+    skipsFrame:RegisterEvent("QUEST_TURNED_IN")
+    skipsFrame:SetScript("OnEvent", function(self)
+        if not self:IsShown() then return end
+        for _, delay in ipairs({ 0.1, 0.5, 1.5 }) do
+            C_Timer.After(delay, function()
+                if self:IsShown() and self.RefreshContent then
+                    self:RefreshContent()
+                end
+            end)
+        end
+    end)
+
     skipsWindow = skipsFrame
     return skipsFrame
 end
@@ -9057,6 +11293,9 @@ function UI.OpenSkipsWindow()
     -- than rendering at default and then snapping to settings.
     local scale = RR:GetSetting("windowScale", 1.0)
     window:SetScale(scale)
+    -- Re-arm the active-raid band flash: every open gets the flash even
+    -- when the raid has not changed since the last one.
+    window._raidFlashKey = nil
     RefreshSkipsContent()
     window:Show()
 end
@@ -9142,10 +11381,17 @@ local function BuildIdleListPills(raid)
     local PILLS = {}
     for _, bucket in ipairs(RR:GetDisplayBuckets(raid)) do
         local label = BUCKET_LABEL[bucket]
+        -- Dungeon Normal never locks, so its pill could only ever read
+        -- fresh; dungeons pill their lockout difficulties (Heroic daily,
+        -- Mythic weekly), and a Normal-only dungeon carries no pill row.
+        if raid.kind == "dungeon" and bucket == 14 then
+            label = nil
+        end
         if label then
             table.insert(PILLS, { id = bucket, label = label })
         end
     end
+    if #PILLS == 0 then return "" end
 
     -- No alpha byte here, or it leaks as visible characters before the label.
     local CLEARED  = "00ff00"  -- matches SPECIAL_COLLECTED RGB
@@ -9187,7 +11433,7 @@ local function BuildIdleListPills(raid)
         -- for the expand chevron (anchored there by RefreshIdleList). Non-wing
         -- raids keep the tight "[ LFR n/N ]".
         local chevronSlot = raid.lfrWings
-            and "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:10:11:0:0:64:64:0:64:0:64:0:0:0:0|t"
+            and "|TInterface\\Common\\Spacer:10:11|t"
             or ""
         lfrSegment = ("|cff777777[ |r%s%s|cff777777 ]|r"):format(
             lfrToken, chevronSlot)
@@ -9247,28 +11493,44 @@ end
 -- Splitting data from rendering is what lets RefreshIdleList anchor toggle
 -- Buttons to their header FontStrings instead of computing line offsets.
 local function BuildIdleListRows()
+    -- Which instance list the picker shows, from the header sentence's
+    -- RAID | DUNGEON toggle. Session-scoped, raids on a fresh login.
+    local dungeonMode = (RR.state and RR.state.idleListMode) == "dungeon"
+
     local byExpansion = {}
-    for _, raid in pairs(RetroRuns_Data or {}) do
-        -- Skip incomplete entries (instanceID = 0). These have no resolved
-        -- journal IDs yet, so they'd render as a raid with all-dash pills
-        -- (journalEncounterID = 0 resolves to no encounter, detectable bosses
-        -- = 0, and the pill renderer takes the "doesn't apply" branch).
-        if raid.instanceID and raid.instanceID > 0 then
-            -- Horde players use the Horde-specific table where one exists, or
-            -- the pill row counts kills against Alliance encounter IDs the
-            -- Horde kills never registered against.
-            local resolved = RR:GetRaidByInstanceID(raid.instanceID) or raid
-            local exp = resolved.expansion or RR.L["Unknown"]
-            byExpansion[exp] = byExpansion[exp] or {}
-            table.insert(byExpansion[exp], resolved)
+    if dungeonMode then
+        for _, dungeon in pairs(RetroRuns_DungeonData or {}) do
+            if dungeon.instanceID and dungeon.instanceID > 0 then
+                local exp = dungeon.expansion or RR.L["Unknown"]
+                byExpansion[exp] = byExpansion[exp] or {}
+                table.insert(byExpansion[exp], dungeon)
+            end
+        end
+    else
+        for _, raid in pairs(RetroRuns_Data or {}) do
+            -- Skip incomplete entries (instanceID = 0). These have no resolved
+            -- journal IDs yet, so they'd render as a raid with all-dash pills
+            -- (journalEncounterID = 0 resolves to no encounter, detectable bosses
+            -- = 0, and the pill renderer takes the "doesn't apply" branch).
+            if raid.instanceID and raid.instanceID > 0 then
+                -- Horde players use the Horde-specific table where one exists, or
+                -- the pill row counts kills against Alliance encounter IDs the
+                -- Horde kills never registered against.
+                local resolved = RR:GetRaidByInstanceID(raid.instanceID) or raid
+                local exp = resolved.expansion or RR.L["Unknown"]
+                byExpansion[exp] = byExpansion[exp] or {}
+                table.insert(byExpansion[exp], resolved)
+            end
         end
     end
 
-    -- Session-scoped expand state. Default = collapsed (no entry in
-    -- the table means "use the default", which is collapsed). The
-    -- toggle Button click handlers flip entries in this table; on
-    -- a fresh /reload or login the addon's RR.state is empty, so all
-    -- expansions start collapsed each session.
+    -- Session-scoped expand state, SHARED by both modes: the expansion is
+    -- what the player is thinking about, and the toggle only picks which of
+    -- its instances to see. Flipping to dungeons with Shadowlands open
+    -- lands on Shadowlands dungeons, not wherever the dungeon list happened
+    -- to be left. Default = collapsed (no entry means "use the default"),
+    -- and RR.state is empty on a fresh /reload or login, so every expansion
+    -- starts collapsed each session.
     local expanded = (RR.state and RR.state.expandedExpansions) or {}
     local function isExpanded(exp)
         return expanded[exp] == true
@@ -9315,31 +11577,35 @@ local function BuildIdleListRows()
             end
         end
 
-        local label = ("%s |cffffffff%s|r"):format(leading, name)
+        -- Skip marker (a 6px spacer pads it to the pill row's 16px
+        -- indent), plane gutter, name: the name starts where the pills
+        -- below it start, and every plane shares one column. A live
+        -- Timewalking tag trails the name for that week only.
+        local label = ("%s|TInterface\\Common\\Spacer:10:6|t%s  |cffffffff%s|r%s")
+            :format(leading, RR.PILL_PLANE_GUTTER, name, UI.RaidTag(raid))
 
         anyRaidShown = true
-        if RR:GetRaidEntrance(raid) then
+        local raidHasPlane = (RR:GetRaidEntrance(raid) ~= nil)
+        if raidHasPlane then
             anyEntranceShown = true
         end
-        table.insert(rows, { kind = "raidName", text = label, raid = raid })
+        table.insert(rows, { kind = "raidName", text = label, raid = raid,
+            hasPlane = raidHasPlane,
+            planeInset = 17 })
         local pills = BuildIdleListPills(raid)
         if pills ~= "" then
             -- Raids with LFR wing data get a wing-expand chevron on the pill
             -- row, positioned in RefreshIdleList.
             local hasWings = raid.lfrWings ~= nil
-            -- Raids with entrance data carry the nav plane in the gutter
-            -- (RR.PILL_PLANE_GUTTER), positioned in RefreshIdleList.
-            local hasPlane = (RR:GetRaidEntrance(raid) ~= nil)
-            local gutter = hasPlane and RR.PILL_PLANE_GUTTER or ""
-            -- Pill row text: sub-line indent, plane gutter, then the pills.
-            -- The indent renders it as a sub-line under the raid name.
-            local rowIndent = RR.PILL_SUBLINE_INDENT .. gutter .. "  "
+            -- Pill row text: sub-line indent and a blank plane-gutter
+            -- width, the same prefix as the name row, so the pills start
+            -- under the name. The wing chevron measures this same prefix.
+            local rowIndent = RR.PILL_SUBLINE_INDENT .. RR.PILL_PLANE_GUTTER .. "  "
             table.insert(rows, {
                 kind = "pillRow",
                 text = rowIndent .. pills,
                 raid = raid,
                 hasWings = hasWings,
-                hasPlane = hasPlane,
             })
 
             -- Wing rows inject below the pill: a header per wing with its own
@@ -9374,19 +11640,142 @@ local function BuildIdleListRows()
         end
     end
 
+    -- A dungeon is ONE row: nav plane, name, then its lockout pills on the
+    -- same line. Raids need a pill sub-line because they carry up to four
+    -- pills over a boss count in double digits; a dungeon carries at most
+    -- two (Heroic daily, Mythic weekly -- Normal never locks), so a second
+    -- line would spend a whole row on a handful of characters. Halves the
+    -- tallest lists: TBC and Wrath run 16 dungeons each.
+    -- No skip-marker column -- dungeons have no skip mechanic -- so a
+    -- dungeons view lights the entrance legend only.
+    -- Multi-wing dungeons collapse under one heading. `wingOf` is the
+    -- heading a dungeon belongs to (nil when it stands alone), and a wing
+    -- row indents so its own plane sits under the FIRST LETTER of that
+    -- heading -- the sub-line indent plus the plane gutter plus the two
+    -- spaces the heading's name starts after.
+    local WING_INDENT = 38
+
+    local function emitDungeon(dungeon, wingOf)
+        local name = RR:GetLocalizedRaidName(dungeon) or "??"
+        -- Under a heading, the row carries only the part that differs.
+        -- Stripped from the LOCALIZED name so the wing reads in the
+        -- player's language; a locale that separates the two parts some
+        -- other way keeps the full name, which is correct if wordier.
+        if wingOf then
+            name = name:match("^.- %- (.+)$") or name
+        end
+        local hasPlane = (RR:GetRaidEntrance(dungeon) ~= nil)
+        if hasPlane then
+            anyEntranceShown = true
+        end
+        -- Routed dungeons read white; the rest stay gray. Every dungeon
+        -- lists for browsing and entrance navigation from day one, and
+        -- routing arrives in phases, so the color says which ones can be
+        -- run start to finish today.
+        local isRouted = RR:InstanceHasRouting(dungeon)
+        -- Timewalking and current-season Mythic+ share one tag column,
+        -- ahead of the plane gutter. Both are runtime-detected, so they
+        -- follow their rotations with no data update.
+        local leading = RR.PILL_SUBLINE_INDENT
+        if wingOf then
+            leading = leading .. RR.PillSpacer(WING_INDENT - 16)
+        end
+        table.insert(rows, {
+            kind = "raidName",
+            text = (leading .. UI.InstanceTagSlot(dungeon)
+                .. RR.PILL_PLANE_GUTTER .. "  |cff%s%s|r")
+                :format(isRouted and "ffffff" or "8a8a8a", name),
+            -- Rendered into its own cell at a shared x, not appended here:
+            -- the pill column has to line up ACROSS rows.
+            pillText = BuildIdleListPills(dungeon),
+            raid = dungeon,
+            hasPlane = hasPlane,
+            -- The tag slot sits ahead of the plane gutter, so the plane's
+            -- fixed inset clears it; 17 is PositionEntranceButton's own
+            -- default.
+            planeInset = (wingOf and (WING_INDENT + 1) or 17)
+                + UI.INSTANCE_TAG_SLOT_W,
+        })
+    end
+
+    -- Heading for a set of wings: a toggle where a dungeon row keeps its
+    -- plane, and the shared part of the name. Reads white when any wing
+    -- below it is routed, matching the rule a single dungeon row follows.
+    local function emitDungeonGroup(groupName, members)
+        local anyRouted = false
+        for _, member in ipairs(members) do
+            if RR:InstanceHasRouting(member) then anyRouted = true break end
+        end
+        local groupExpanded = (RR.state and RR.state.expandedDungeonGroups
+            and RR.state.expandedDungeonGroups[groupName]) == true
+        -- The heading reads in the client's own words: the wings' journal
+        -- names are already localized, and the shared half of one is the
+        -- heading. No locale entry to keep -- the game translates these
+        -- zone names itself, and a hand-kept copy could only go stale or
+        -- disagree with what the player sees everywhere else. Falls back
+        -- to the authored prefix if a locale separates the halves some
+        -- other way.
+        local localizedFull = RR:GetLocalizedRaidName(members[1]) or groupName
+        local heading = localizedFull:match("^(.-) %- ") or groupName
+        table.insert(rows, {
+            kind = "dungeonGroup",
+            groupName = groupName,
+            expanded = groupExpanded,
+            -- The same column the member rows put their planes in: this
+            -- row's text reserves the tag slot exactly as theirs does, so
+            -- the expander lands under the planes rather than beside them.
+            planeInset = 17 + UI.INSTANCE_TAG_SLOT_W,
+            text = (RR.PILL_SUBLINE_INDENT .. UI.InstanceTagSlot(nil)
+                .. RR.PILL_PLANE_GUTTER .. "  |cff%s%s|r")
+                :format(anyRouted and "ffffff" or "8a8a8a", heading),
+        })
+        if groupExpanded then
+            for _, member in ipairs(members) do
+                emitDungeon(member, groupName)
+            end
+        end
+    end
+
     -- Render an expansion's header. The toggle button (acquired and
     -- positioned by RefreshIdleList) anchors to the row's FontString;
     -- the row's text starts with leading-space padding so the button
     -- has visual room without overlapping the text.
-    local function emitExpansion(exp, raids)
-        table.sort(raids, patchDescending)
+    local function emitExpansion(exp, instances)
+        table.sort(instances, patchDescending)
         table.insert(rows, {
             kind     = "expansionHeader",
             exp      = exp,
             expanded = isExpanded(exp),
         })
         if isExpanded(exp) then
-            for _, raid in ipairs(raids) do emitRaid(raid) end
+            if dungeonMode then
+                -- Wings of one dungeon fold under a single heading. Keyed
+                -- on the AUTHORED name, which is stable across locales,
+                -- and only when two or more share a prefix -- a lone
+                -- "X - Y" dungeon is not worth a heading of its own.
+                local wingsOf, headingOrder = {}, {}
+                for _, instance in ipairs(instances) do
+                    local heading = instance.name:match("^(.-) %- ")
+                                    or instance.name
+                    if not wingsOf[heading] then
+                        wingsOf[heading] = {}
+                        headingOrder[#headingOrder + 1] = heading
+                    end
+                    table.insert(wingsOf[heading], instance)
+                end
+                for _, heading in ipairs(headingOrder) do
+                    local members = wingsOf[heading]
+                    if #members > 1 then
+                        emitDungeonGroup(heading, members)
+                    else
+                        emitDungeon(members[1])
+                    end
+                end
+            else
+                for _, instance in ipairs(instances) do
+                    emitRaid(instance)
+                end
+            end
         end
         table.insert(rows, { kind = "spacer" })
     end
@@ -9404,7 +11793,7 @@ local function BuildIdleListRows()
     end
 
     if #rows == 0 then
-        table.insert(rows, { kind = "emptyMessage", text = RR.L["|cff9d9d9d(no raid data loaded)|r"] })
+        table.insert(rows, { kind = "emptyMessage", text = RR.L["|cff9d9d9d(no instance data loaded)|r"] })
     end
 
     -- The skip legend shows whenever any raid line is rendered, since every
@@ -9442,6 +11831,12 @@ end
 -- Only includes fields that affect rendered output.
 local function FingerprintIdleRows(rows)
     local parts = {}
+    -- The expansion header's Timewalking hourglass is composed at render
+    -- time, not carried in row text, so the live week and its remaining
+    -- days must be part of the key or a late-arriving answer never paints.
+    table.insert(parts, ("tw:%s:%s"):format(
+        tostring(RR:GetActiveTimewalkingExpansion()),
+        tostring(RR:GetTimewalkingEnd())))
     for i, row in ipairs(rows) do
         -- kind + text covers most rows; expansionHeader adds expanded
         -- flag (toggle glyph state); raidName / pillRow include their
@@ -9465,9 +11860,18 @@ local function FingerprintIdleRows(rows)
             rowText = ("%s|%s|%s"):format(boss.name or "", kill,
                 row.unmapped and "u" or "m")
         end
+        -- A wing heading's open/closed state rides `expanded` like an
+        -- expansion header's, and its identity is the heading name.
+        if rowKind == "dungeonGroup" then
+            exp = row.groupName or ""
+        end
         parts[i] = ("%s|%s|%s|%s"):format(rowKind, expandedFlag, exp, rowText)
     end
-    return table.concat(parts, "\n")
+    -- Salt with the list mode: a RAID | DUNGEON flip with every expansion
+    -- collapsed produces identical header rows, and an unsalted match
+    -- would skip the re-render that repaints the toggle's own state.
+    return ((RR.state and RR.state.idleListMode) or "raid")
+        .. "\n" .. table.concat(parts, "\n")
 end
 
 RefreshIdleList = function()
@@ -9491,6 +11895,7 @@ RefreshIdleList = function()
         panel._lastIdleRaidContext = idleRaidContext
         RR.state = RR.state or {}
         RR.state.expandedExpansions = {}
+        RR.state.expandedDungeonGroups = {}
         -- Collapse any open wing expanders too, so the list opens fully
         -- collapsed on each raid-context transition (matches the
         -- expansion accordion's reset behavior).
@@ -9520,6 +11925,7 @@ RefreshIdleList = function()
     -- Recycle previously-active line FontStrings and toggle Buttons
     -- before this frame's batch is created.
     ReleaseIdleListLines()
+    UI.ReleaseIdlePillCells()
     ReleaseExpansionToggleButtons()
     ReleaseEntranceButtons()
     ReleasePillHoverFrames()
@@ -9541,6 +11947,38 @@ RefreshIdleList = function()
     -- content to read" -- bumping it with the slider would lose that
     -- visual hierarchy.
     local LEGEND_FONT_SIZE = 10
+
+    -- Pill column for dungeon rows: one x-offset shared by every row,
+    -- taken from the widest name actually on screen so the column sits as
+    -- far left as the longest name allows. Measured with a hidden
+    -- FontString at the render font, before any row is laid out.
+    local pillColumnX = 0
+    if not panel._idleMeasureFS then
+        panel._idleMeasureFS = panel:CreateFontString(nil, "ARTWORK")
+        panel._idleMeasureFS:Hide()
+    end
+    local measureFS = panel._idleMeasureFS
+    SetBodyFont(measureFS, fontSize, "")
+    local widestPill = 0
+    for _, row in ipairs(rows) do
+        if row.pillText and row.pillText ~= "" then
+            measureFS:SetText(row.text or "")
+            local nameWidth = measureFS:GetStringWidth() or 0
+            if nameWidth > pillColumnX then pillColumnX = nameWidth end
+            measureFS:SetText(row.pillText)
+            local pillWidth = measureFS:GetStringWidth() or 0
+            if pillWidth > widestPill then widestPill = pillWidth end
+        end
+    end
+    if pillColumnX > 0 then
+        pillColumnX = math.ceil(pillColumnX) + 12
+        -- Never push the column so far right that the pills leave the
+        -- panel; the longest name yields rather than the pills clipping.
+        local lastFitting = BODY_WIDTH - widestPill
+        if pillColumnX > lastFitting then
+            pillColumnX = math.max(0, lastFitting)
+        end
+    end
 
     local prev = nil  -- previous FontString, for anchor chaining
     -- Running total of pixels the applied row gaps exceed ROW_GAP by.
@@ -9575,8 +12013,40 @@ RefreshIdleList = function()
             -- loop bottom-up pass.
             if row.kind == "expansionHeader" then
                 -- Indent with leading spaces to leave room for the
-                -- toggle button glyph anchored at LEFT.
-                fs:SetText(("    |cff00ffff%s|r"):format(RR.L[row.exp]))
+                -- toggle button glyph anchored at LEFT. A trailing marker
+                -- when this expansion's Timewalking week is the live one --
+                -- trailing so the toggle and the name hold their column on
+                -- every other week.
+                -- Called inline rather than hoisted to a local: the
+                -- engine caches the answer for 30s, only a dozen headers
+                -- render, and UI.lua sits at the 200-local ceiling.
+                local twMark, twDays = "", nil
+                if row.exp == RR:GetActiveTimewalkingExpansion() then
+                    twDays = RR:GetTimewalkingEnd()
+                    twMark = " " .. UI.TimewalkingMarker(twDays)
+                end
+                fs:SetText(("    |cff00ffff%s|r%s")
+                    :format(RR.L[row.exp], twMark))
+                -- Hover the GLYPH, not the heading: the marker sits at the
+                -- end of the string, so the region is the last few pixels
+                -- of the rendered width. Measured after SetText or the
+                -- width is a frame behind.
+                if twMark ~= "" then
+                    local hoverFrame = AcquirePillHoverFrame()
+                    local textWidth = fs:GetStringWidth() or 0
+                    hoverFrame:ClearAllPoints()
+                    hoverFrame:SetPoint("TOPLEFT", fs, "TOPLEFT",
+                        textWidth - UI.TIMEWALKING_MARKER_W, 0)
+                    hoverFrame:SetPoint("BOTTOMRIGHT", fs, "BOTTOMLEFT",
+                        textWidth, 0)
+                    hoverFrame:Show()
+                    hoverFrame._lockoutModel = nil
+                    hoverFrame._underDevelopment = nil
+                    hoverFrame._seasonal = nil
+                    hoverFrame._timewalking = true
+                    hoverFrame._timewalkingDays = twDays
+                    table.insert(panel.pillHoverFrames, hoverFrame)
+                end
             elseif row.kind == "wingHeader" then
                 -- Wing header: "WingName (n/N)", one level under the pill row.
                 -- Green when fully cleared, gray otherwise. An unmapped wing
@@ -9609,6 +12079,9 @@ RefreshIdleList = function()
                 fs:SetText(row.text or "")
             end
 
+            -- Search-jump target: the flash finds this row by instance.
+            fs._searchInstanceID = row.raid and row.raid.instanceID or nil
+
             -- Anchor: top of the list for the first row, BOTTOMLEFT of
             -- the previous row otherwise. The previous row may have set
             -- _nextGap (if a spacer preceded this row); use that gap
@@ -9635,15 +12108,52 @@ RefreshIdleList = function()
             -- system (shared / LFR-split / independent), which applies to
             -- the whole row, LFR pill included -- so the overlay covers the
             -- full rendered pill string.
-            if row.kind == "pillRow" then
+            -- Dungeon pills: their own cell at the shared column x, so the
+            -- column is straight by construction at any font or scale.
+            if row.pillText and row.pillText ~= "" then
+                local pillCell = UI.AcquireIdlePillCell()
+                SetBodyFont(pillCell, fontSize, "")
+                pillCell:SetText(row.pillText)
+                pillCell:ClearAllPoints()
+                pillCell:SetPoint("LEFT", fs, "LEFT", pillColumnX, 0)
+                pillCell:Show()
+                table.insert(panel.idlePillCells, pillCell)
+            end
+
+            -- Where the row's rendered content ends, measured from the
+            -- name's left edge. A dungeon row's pills sit in their own cell
+            -- past the name, so anything anchoring to the row's right edge
+            -- has to reach the column rather than stopping at the name's
+            -- width. Read by the hover region and by the travel toast.
+            local rowContentRight = fs:GetStringWidth() or 0
+            if row.pillText and row.pillText ~= "" then
+                rowContentRight = pillColumnX + widestPill
+            end
+
+            local needsDevTip = (row.raid ~= nil
+                and row.raid.kind == "dungeon"
+                and not RR:InstanceHasRouting(row.raid)) or false
+            if row.kind == "pillRow" or row.raid ~= nil
+                or (row.pillText and row.pillText ~= "") then
                 local hoverFrame = AcquirePillHoverFrame()
                 hoverFrame:ClearAllPoints()
                 hoverFrame:SetPoint("TOPLEFT", fs, "TOPLEFT", 0, 0)
                 hoverFrame:SetPoint("BOTTOMRIGHT", fs, "BOTTOMLEFT",
-                    (fs:GetStringWidth() or 0), 0)
+                    rowContentRight, 0)
                 hoverFrame:Show()
                 hoverFrame._lockoutModel =
-                    row.raid and row.raid.difficultyModel or nil
+                    row.raid and (row.raid.difficultyModel or "independent") or nil
+                -- Dungeons ship for browsing first and gain routing in
+                -- phases; the gray name says so and this says why. Raids
+                -- are all routed, so the flag is dungeon-only rather than
+                -- a general has-no-routing test.
+                hoverFrame._underDevelopment = needsDevTip or nil
+                -- A row wearing a tag leads its tooltip with that tag's
+                -- line; the lockout gloss follows under it.
+                hoverFrame._timewalking =
+                    (row.raid and RR:IsTimewalkingLive(row.raid)) or nil
+                hoverFrame._seasonal =
+                    (row.raid and RR:IsSeasonalDungeon(row.raid)) or nil
                 table.insert(panel.pillHoverFrames, hoverFrame)
             end
 
@@ -9770,13 +12280,46 @@ RefreshIdleList = function()
                 table.insert(panel.expansionToggleButtons, btn)
             end
 
-            -- Nav button on the pill row, at a fixed left inset so every
-            -- plane lands in one vertical column. Clicking opens the
-            -- LFR/Standard chooser. Alpha: full-color when any nav provider
-            -- above bare-Blizzard is installed, muted otherwise.
-            if row.kind == "pillRow" and row.raid and RR:GetRaidEntrance(row.raid) then
+            -- Wing heading: the same toggle an expansion header uses, but
+            -- sitting in the column a dungeon row gives its plane.
+            -- Independent per heading rather than an accordion -- a set of
+            -- wings is short, and closing one to open another would fight
+            -- the reason they were folded up in the first place.
+            if row.kind == "dungeonGroup" then
+                local btn = AcquireExpansionToggleButton()
+                PositionExpansionToggleButton(btn, fs, row.expanded)
+                btn:ClearAllPoints()
+                -- Centered on the member rows' plane column: same inset
+                -- they use, plus half the difference in glyph size (a
+                -- plane is 1.4x the toggle), so the two share an axis.
+                local planeSize = math.floor(fontSize * 1.4)
+                btn:SetPoint("LEFT", fs, "LEFT",
+                    (row.planeInset or 17)
+                        + math.floor((planeSize - fontSize) / 2), 0)
+                local groupName = row.groupName
+                btn:SetScript("OnClick", function()
+                    RR.state = RR.state or {}
+                    RR.state.expandedDungeonGroups =
+                        RR.state.expandedDungeonGroups or {}
+                    local isOpen = RR.state.expandedDungeonGroups[groupName]
+                    RR.state.expandedDungeonGroups[groupName] =
+                        (not isOpen) or nil
+                    if RR.UI and RR.UI.Update then RR.UI.Update() end
+                end)
+                btn:Show()
+                table.insert(panel.expansionToggleButtons, btn)
+            end
+
+            -- Nav button at a fixed left inset so every plane lands in one
+            -- vertical column, on the name row for raids and dungeons
+            -- alike (marked by hasPlane). Clicking opens
+            -- the LFR/Standard chooser, which navigates straight to the
+            -- entrance when there are no wings to choose between -- every
+            -- dungeon takes that path. Alpha: full-color when any nav
+            -- provider above bare-Blizzard is installed, muted otherwise.
+            if row.hasPlane and row.raid and RR:GetRaidEntrance(row.raid) then
                 local btn = AcquireEntranceButton()
-                PositionEntranceButton(btn, fs)
+                PositionEntranceButton(btn, fs, row.planeInset)
                 local raid = row.raid
                 local anyProviderInstalled = RR:IsAWPInstalled()
                     or RR:IsZygorInstalled()
@@ -9784,9 +12327,9 @@ RefreshIdleList = function()
                     or RR:IsWUIInstalled()
                     or RR:IsTomTomInstalled()
                 btn:SetAlpha(anyProviderInstalled and 1.0 or 0.4)
-                local rowFS = fs
+                local rowFS, rowRight = fs, rowContentRight
                 btn:SetScript("OnClick", function(self)
-                    panel.ShowNavChooser(self, raid, rowFS)
+                    panel.ShowNavChooser(self, raid, rowFS, rowRight)
                 end)
                 btn:Show()
                 table.insert(panel.entranceButtons, btn)
@@ -9822,6 +12365,7 @@ RefreshIdleList = function()
             local fs = AcquireIdleListLine()
             SetBodyFont(fs, LEGEND_FONT_SIZE, "")
             fs:SetText(IDLE_SKIP_LEGEND)
+            panel._idleLegendRows = (panel._idleLegendRows or 0) + 1
             fs:ClearAllPoints()
             if lastLegendTopFS then
                 fs:SetPoint("BOTTOMLEFT", lastLegendTopFS, "TOPLEFT", 0, LEGEND_INTER_GAP)
@@ -9838,6 +12382,7 @@ RefreshIdleList = function()
             -- against each other; each data string anchors to its own label at
             -- a fixed offset. Rendered bottom-up so each anchor target exists.
             local entranceRows = BuildEntranceLegend()
+            panel._idleLegendRows = (panel._idleLegendRows or 0) + #entranceRows
             -- xOffsetFor: per-row left position relative to PAD_LEFT.
             -- Marker rows render the marker glyph as text inside the
             -- label FontString, so their label FontString left edge
@@ -9860,7 +12405,7 @@ RefreshIdleList = function()
                 local labelFS = AcquireIdleListLine()
                 SetBodyFont(labelFS, LEGEND_FONT_SIZE, "")
                 if rowSpec.withMarker then
-                    labelFS:SetText("|cff9d9d9d" .. ENTRANCE_MARKER .. " = |r" .. rowSpec.label)
+                    labelFS:SetText("|cff9d9d9d" .. EntranceMarker() .. " = |r" .. rowSpec.label)
                 else
                     labelFS:SetText(rowSpec.label)
                 end
@@ -9970,12 +12515,20 @@ PositionLegendDivider = function()
         if panel.legendDividerGem then panel.legendDividerGem:Hide() end
         return
     end
-    -- True midpoint between the last raid row's bottom and the legend's top.
-    -- Anchor the divider by its CENTER to that point so its visual center IS the
-    -- midpoint (anchoring by TOPLEFT instead would hang the divider + its taller
-    -- gem below the midpoint by half their height -- the off-center bug).
-    local mid       = (rowBottom + legendTop) / 2   -- midpoint Y (screen coords)
-    local dyFromRow = rowBottom - mid               -- downward distance from the row bottom to the midpoint
+    -- Centerd in the band between the last row and the legend, so the
+    -- clearance above the rule matches the clearance below it. A fixed
+    -- distance from the row held the gap above steady across lists but left
+    -- the gap below to whatever the footer reserve had going spare, which
+    -- ran about twice as wide.
+    --
+    -- Anchored by its CENTER so the rule's visual center lands on the
+    -- target; anchoring by TOPLEFT hangs the rule and its taller gem below
+    -- by half their height (the off-center bug).
+    -- Screen Y grows upward, so the midpoint of the two edges is the
+    -- symmetric point, and it stays between them however tight the band
+    -- gets on a long list.
+    local mid = (rowBottom + legendTop) / 2
+    local dyFromRow = rowBottom - mid               -- downward distance from the row bottom to the rule
     panel.legendDivider:ClearAllPoints()
     panel.legendDivider:SetPoint("CENTER", lastList, "BOTTOMLEFT", BODY_WIDTH / 2, -dyFromRow)
     panel.legendDivider:SetWidth(BODY_WIDTH)
@@ -9987,11 +12540,156 @@ end
 -- Main update
 -------------------------------------------------------------------------------
 
+-- Idle header sentence with the RAID | DUNGEON mode toggle embedded at its
+-- %s slot, switching which instance list the idle picker shows. Same look
+-- as the settings Enable | Disable pairs: the selected word cyan with a
+-- 1px magenta underline, the other dim. Built once; laid out and refreshed per
+-- idle render.
+function UI.EnsureIdleModeLine()
+    if panel.idleModeLine then return panel.idleModeLine end
+    local line = {}
+    local pattern = RR.L["Choose a %s to begin."]
+    local prefixText, suffixText = pattern:match("^(.-)%%s(.*)$")
+    if not prefixText then prefixText, suffixText = pattern, "" end
+
+    -- The sentence's own spaces around %s are dropped: a FontString
+    -- trims a trailing space from its width but renders a leading one, so
+    -- keeping them would gap one side of the toggle by nothing and the
+    -- other by a font-dependent advance. Layout spaces both sides itself.
+    line.prefix = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    line.prefix:SetText((prefixText:gsub("%s+$", "")))
+    line.suffix = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    line.suffix:SetText((suffixText:gsub("^%s+", "")))
+    line.sep = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    line.sep:SetText("|")
+    line.sep:SetTextColor(0.62, 0.62, 0.62)
+
+    local function MakeWord(word)
+        local btn = CreateFrame("Button", nil, panel)
+        local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        fs:SetText(word)
+        fs:SetPoint("TOPLEFT", btn, "TOPLEFT")
+        btn.fs = fs
+        -- Magenta underline under the selected word, one PHYSICAL pixel
+        -- tall. Texel snapping off and pixel-grid snapping off: a hairline
+        -- at a fractional coordinate can round away to nothing at some UI
+        -- scales, and this line sits at chained (fractional) anchors. Height
+        -- is re-applied in Layout so a scale change does not leave it stale.
+        local underline = btn:CreateTexture(nil, "ARTWORK")
+        underline:SetColorTexture(C_PINK[1], C_PINK[2], C_PINK[3], 1)
+        underline:SetHeight(1 / (underline:GetEffectiveScale() or 1))
+        if underline.SetTexelSnappingBias then
+            underline:SetTexelSnappingBias(0)
+            underline:SetSnapToPixelGrid(false)
+        end
+        underline:SetPoint("TOPLEFT", fs, "BOTTOMLEFT", 0, -2)
+        underline:SetPoint("TOPRIGHT", fs, "BOTTOMRIGHT", 0, -2)
+        underline:Hide()
+        btn.underline = underline
+        return btn
+    end
+    line.raidBtn    = MakeWord(RR.L["RAID"])
+    line.dungeonBtn = MakeWord(RR.L["DUNGEON"])
+
+    local function SetMode(mode)
+        RR.state = RR.state or {}
+        if RR.state.idleListMode == mode then return end
+        RR.state.idleListMode = mode
+        UI.InvalidateIdleListCache()
+        UI.Update()
+    end
+    line.raidBtn:SetScript("OnClick", function() SetMode("raid") end)
+    line.dungeonBtn:SetScript("OnClick", function() SetMode("dungeon") end)
+
+    -- Selected word cyan + underlined, the other dim. Mirrors the settings
+    -- pair's Refresh.
+    line.Refresh = function()
+        local dungeonMode = (RR.state and RR.state.idleListMode) == "dungeon"
+        local function paint(btn, selected)
+            if selected then
+                btn.fs:SetTextColor(0.30, 0.80, 1.00)
+            else
+                btn.fs:SetTextColor(0.62, 0.62, 0.62)
+            end
+            btn.underline:SetShown(selected)
+        end
+        paint(line.raidBtn, not dungeonMode)
+        paint(line.dungeonBtn, dungeonMode)
+    end
+
+    -- Fonts the pieces at the current body size and chains them from the
+    -- (empty) progress FontString's top-left, so the sentence sits exactly
+    -- where the old one-string prompt rendered.
+    line.Layout = function(fontSize)
+        for _, fs in ipairs({ line.prefix, line.suffix, line.sep,
+                              line.raidBtn.fs, line.dungeonBtn.fs }) do
+            SetBodyFont(fs, fontSize, "")
+        end
+        for _, btn in ipairs({ line.raidBtn, line.dungeonBtn }) do
+            btn:SetSize(math.max(1, btn.fs:GetStringWidth() or 1),
+                (btn.fs:GetStringHeight() or fontSize) + 4)
+            btn.underline:SetHeight(1 / (btn.underline:GetEffectiveScale() or 1))
+        end
+        -- Word gap either side of the toggle, separator gap either side
+        -- of the bar. Both scale off the body size, which the font slider
+        -- drives -- at a fixed value the glyphs grow and the words close
+        -- on the bar. Both resolve to the tuned 4 and 6 at size 12.
+        local wordGap = math.max(1, math.floor(fontSize * 4 / 12 + 0.5))
+        local sepGap  = math.max(1, math.floor(fontSize * 6 / 12 + 0.5))
+        -- A locale can open or close the sentence on %s. An absent piece
+        -- takes no gap, or the run leads with a stray indent.
+        local headGap = ((line.prefix:GetText() or "") ~= "") and wordGap or 0
+        local tailGap = ((line.suffix:GetText() or "") ~= "") and wordGap or 0
+        -- Every piece TOP-anchors to the previous one. All five render
+        -- the same font at the same size, so aligned tops mean aligned
+        -- baselines -- LEFT-chaining centered the taller button boxes on
+        -- the text line and floated the toggle words a few pixels high.
+        -- Centered on the body column: the pieces are five separate
+        -- widgets, so the run is measured and the head offset by half the
+        -- slack. Gaps are counted at the same values the anchors use
+        -- below, or the centering drifts by their total.
+        local runWidth = (line.prefix:GetStringWidth() or 0)
+            + headGap + (line.raidBtn.fs:GetStringWidth() or 0)
+            + sepGap + (line.sep:GetStringWidth() or 0)
+            + sepGap + (line.dungeonBtn.fs:GetStringWidth() or 0)
+            + tailGap + (line.suffix:GetStringWidth() or 0)
+        local centerOffset = math.max(0,
+            math.floor((BODY_WIDTH - runWidth) / 2))
+
+        line.prefix:ClearAllPoints()
+        line.prefix:SetPoint("TOPLEFT", panel.progress, "TOPLEFT",
+            centerOffset, 0)
+        line.raidBtn:ClearAllPoints()
+        line.raidBtn:SetPoint("TOPLEFT", line.prefix, "TOPRIGHT", headGap, 0)
+        -- Equal gaps either side of the bar's box read centered on screen.
+        line.sep:ClearAllPoints()
+        line.sep:SetPoint("TOPLEFT", line.raidBtn, "TOPRIGHT", sepGap, 0)
+        line.dungeonBtn:ClearAllPoints()
+        line.dungeonBtn:SetPoint("TOPLEFT", line.sep, "TOPRIGHT", sepGap, 0)
+        line.suffix:ClearAllPoints()
+        line.suffix:SetPoint("TOPLEFT", line.dungeonBtn, "TOPRIGHT", tailGap, 0)
+    end
+
+    line.SetShown = function(shown)
+        for _, widget in ipairs({ line.prefix, line.suffix, line.sep,
+                                  line.raidBtn, line.dungeonBtn }) do
+            widget:SetShown(shown)
+        end
+    end
+
+    panel.idleModeLine = line
+    return line
+end
+
 function UI.Update()
     if not RetroRunsDB or not RR:IsPanelAllowed() then
         panel:Hide()
         return
     end
+
+    -- The idle-mode toggle line only belongs to the plain-idle branch
+    -- below; every other state hides it before rendering.
+    if panel.idleModeLine then panel.idleModeLine.SetShown(false) end
 
     panel:Show()
     UI.ApplySettings()
@@ -10024,13 +12722,15 @@ function UI.Update()
         panel.credit:SetText(RR.L["Created by |cff4DCCFFPhotek|r"])
     end
 
+
     if raid and loaded then
         -- Raid name only; kill state lives in the pills row below. A trailing
         -- star marks a difficulty at or below the account's skip ceiling.
         --
         -- Faction marker for raids with per-faction data; symmetric raids get
         -- none.
-        local raidLabel = RR.L["Raid: "] .. (RR:GetLocalizedRaidName(raid) or raid.name)
+        local raidLabel = ((raid.kind == "dungeon") and RR.L["Dungeon: "]
+            or RR.L["Raid: "]) .. (RR:GetLocalizedRaidName(raid) or raid.name)
         if RetroRuns_DataHorde and RetroRuns_DataHorde[raid.instanceID] then
             local faction = UnitFactionGroup("player")
             if faction == "Horde" then
@@ -10070,10 +12770,16 @@ function UI.Update()
             panel.pillsHover._lockoutTip = true
             panel.pillsHover._lockoutModel = raid.difficultyModel
             panel.pillsHover:ClearAllPoints()
-            panel.pillsHover:SetPoint("TOPLEFT", panel.pills, "TOPLEFT", 0, 0)
+            -- The pill row is centered in a full-width FontString, so the
+            -- text starts well right of the string's own left edge; the
+            -- hover region has to follow the text, not the frame.
+            local pillsTextW = panel.pills:GetStringWidth() or 0
+            local pillsInset = math.max(0,
+                ((panel.pills:GetWidth() or pillsTextW) - pillsTextW) / 2)
+            panel.pillsHover:SetPoint("TOPLEFT", panel.pills, "TOPLEFT",
+                pillsInset, 0)
             panel.pillsHover:SetPoint("BOTTOM", panel.pills, "BOTTOM", 0, 0)
-            panel.pillsHover:SetWidth(
-                (panel.pills:GetStringWidth() or 0) + 2)
+            panel.pillsHover:SetWidth(pillsTextW + 2)
         end
         -- Progress line was "Progress: X/Y" -- the player's current-
         -- difficulty kill count -- but the pills row now displays the
@@ -10098,6 +12804,8 @@ function UI.Update()
             panel.travel:SetText("")
             panel.exitNote:SetText("")
             panel.exitNote:Hide()
+            panel.exitNoteExtra:SetText("")
+            panel.exitNoteExtra:Hide()
             panel.skipReturn:SetText("")
             panel.skipReturn:Hide()
             panel.skipNote:SetText("")
@@ -10155,6 +12863,8 @@ function UI.Update()
             panel.travel:SetText(BuildTravelText(step))
             panel.exitNote:SetText("")
             panel.exitNote:Hide()
+            panel.exitNoteExtra:SetText("")
+            panel.exitNoteExtra:Hide()
             panel.skipReturn:SetText("")
             panel.skipReturn:Hide()
             panel.skipNote:SetText("")
@@ -10226,12 +12936,19 @@ function UI.Update()
             -- Resize the wrapper to sum-of-children-heights so the
             -- downstream anchor (panel.transmog -> panel.encounter
             -- BOTTOMLEFT) lands at the visual bottom of the content.
-            -- The 4+4 accounts for the two 4px gaps between the three
-            -- child sub-widgets. Hidden children contribute their 1px
-            -- placeholder height + 4px gap; effectively negligible.
+            -- Only children that actually render are counted, each with one
+            -- section gap ahead of it. Counting a hidden child's 1px
+            -- placeholder AND its gap left dead space at the wrapper's
+            -- foot, which read as a wider gap above the transmog line.
             local totalH = headerH
-                         + 4 + (panel.encounter.achievements:GetHeight() or 1)
-                         + 4 + (panel.encounter.specialLoot:GetHeight() or 1)
+            if panel.encounter.achievements:IsShown() then
+                totalH = totalH + UI.PANEL_SECTION_GAP
+                       + (panel.encounter.achievements:GetHeight() or 1)
+            end
+            if panel.encounter.specialLoot:IsShown() then
+                totalH = totalH + UI.PANEL_SECTION_GAP
+                       + (panel.encounter.specialLoot:GetHeight() or 1)
+            end
             panel.encounter:SetHeight(math.max(14, totalH))
             local tmog = BuildTransmogSummary(step)
             panel.transmog:SetText(tmog or "")
@@ -10245,43 +12962,22 @@ function UI.Update()
                 panel.transmog:SetHeight(math.max(14, panel.transmog.label:GetStringHeight()))
             end
 
-            -- In-progress state: listHeader anchored under transmog
-            -- as designed; shows "Boss Progress" with per-boss kill
-            -- checklist.
+            -- In-progress state: "Boss Progress" over the per-boss kill
+            -- checklist, anchored under the last VISIBLE widget above it.
+            -- A boss that drops nothing with an appearance (Zul'Farrak's
+            -- Theka the Martyr) produces no transmog summary, and a hidden
+            -- FontString keeps its reserved height and position -- always
+            -- anchoring to it left a band of empty panel above the list.
             panel.listHeader:ClearAllPoints()
-            panel.listHeader:SetPoint("TOPLEFT", panel.transmog, "BOTTOMLEFT", 0, -12)
+            panel.listHeader:SetPoint("TOPLEFT",
+                panel.transmog:IsShown() and panel.transmog or panel.encounter,
+                "BOTTOMLEFT", 0, -UI.PANEL_SECTION_GAP)
             if RR.state.testMode then
                 panel.listHeader:SetText(RR.L["Boss Progress  |cffffff00[ TEST MODE ]|r"])
             else
                 panel.listHeader:SetText(RR.L["Boss Progress"])
             end
-            -- Render the boss list as per-line FontStrings rather than
-            -- one multi-line FontString, matching the idle-list
-            -- architecture. No click overlays on these rows today, but
-            -- the per-line layout means any future per-row interactivity
-            -- (click a boss to scroll routing, hover for loot, etc.)
-            -- gets the same drift-immune anchoring the idle list uses.
-            -- panel.list (the legacy multi-line FontString) is kept
-            -- empty; the per-line FontStrings own all rendering.
-            panel.list:SetText("")
-            ReleaseProgressListLines()
-            local progressLines = RR:GetProgressLines()
-            local progFontSize = RR:GetSetting("fontSize", 12)
-            local prevProg
-            for _, lineText in ipairs(progressLines) do
-                local fs = AcquireProgressListLine()
-                SetBodyFont(fs, progFontSize, "")
-                fs:SetText(lineText or "")
-                fs:ClearAllPoints()
-                if prevProg then
-                    fs:SetPoint("TOPLEFT", prevProg, "BOTTOMLEFT", 0, -2)
-                else
-                    fs:SetPoint("TOPLEFT", panel.listHeader, "BOTTOMLEFT", 0, -8)
-                end
-                fs:Show()
-                table.insert(panel.progressListLines, fs)
-                prevProg = fs
-            end
+            UI.RenderBossProgressList()
             -- In-progress list has no expansion-header rows -- it's a
             -- per-boss kill checklist -- so release any toggle Buttons
             -- and per-line FontStrings left over from a prior
@@ -10326,17 +13022,49 @@ function UI.Update()
                 -- routing stays down for the rest of the lockout. The caveat
                 -- rides its own field: two points down and indented, which
                 -- one FontString cannot express.
-                if isSkip then
-                    panel.skipReturn:SetText(
-                        RR.L["Feel free to return and kill any bosses you skipped!"])
+                -- A lockout-less run ends ready to be run again. A skipped
+                -- one can also end that way -- dungeons carry optional
+                -- bosses now -- so the two compose rather than excluding
+                -- each other, and the routing caveat gives way to the reset
+                -- reminder there: it names a lockout the instance does not
+                -- have, and a reset brings routing back.
+                local lockoutlessDungeon = RR.currentRaid
+                    and RR.currentRaid.kind == "dungeon"
+                    and not RR:GetCurrentLockoutId()
+                if isSkip or lockoutlessDungeon then
+                    local returnLines = {}
+                    if isSkip and not (RR.SkippedBossesUnreturnable
+                        and RR:SkippedBossesUnreturnable()) then
+                        returnLines[#returnLines + 1] =
+                            RR.L["Feel free to return and kill any bosses you skipped!"]
+                    end
+                    if lockoutlessDungeon then
+                        -- The game's own menu term rides a caret span,
+                        -- localized by the client.
+                        local resetTerm = "^"
+                            .. (RESET_INSTANCES or "Reset all instances") .. "^"
+                        returnLines[#returnLines + 1] =
+                            (RR.L["Want to run it again? Zone out and %s."]):format(resetTerm)
+                    end
+                    panel.skipReturn:SetText(HighlightNames(
+                        table.concat(returnLines, " ")))
                     panel.skipReturn:SetTextColor(1, 1, 1)
                     SetBodyFont(panel.skipReturn, exitFontSize, "")
                     panel.skipReturn:Show()
-                    panel.skipNote:SetText("|cff9d9d9d"
-                        .. RR.L["Note: Routing will not be available on this lockout"]
-                        .. "|r")
-                    SetBodyFont(panel.skipNote, math.max(8, exitFontSize - 2), "")
-                    panel.skipNote:Show()
+
+                    -- The cap itself lives in the footer counter, which is
+                    -- on screen here too; repeating it under the banner said
+                    -- the same number twice.
+                    if lockoutlessDungeon then
+                        panel.skipNote:SetText("")
+                        panel.skipNote:Hide()
+                    else
+                        panel.skipNote:SetText("|cff9d9d9d"
+                            .. RR.L["Note: Routing will not be available on this lockout"]
+                            .. "|r")
+                        SetBodyFont(panel.skipNote, math.max(8, exitFontSize - 2), "")
+                        panel.skipNote:Show()
+                    end
                 else
                     panel.skipReturn:SetText("")
                     panel.skipReturn:Hide()
@@ -10362,13 +13090,46 @@ function UI.Update()
                 panel.exitNote:ClearAllPoints()
                 if panel.skipNote:IsShown() then
                     panel.exitNote:SetPoint("TOPLEFT", panel.skipNote, "BOTTOMLEFT", -12, -13)
+                elseif panel.skipReturn:IsShown() then
+                    panel.exitNote:SetPoint("TOPLEFT", panel.skipReturn, "BOTTOMLEFT", 0, -13)
                 else
                     panel.exitNote:SetPoint("TOPLEFT", panel.next, "BOTTOMLEFT", 0, -13)
                 end
+                -- Below the exit note, on its own line: the boss the route
+                -- never sent the player to, and what is left to collect
+                -- there. Hangs off panel.exitNote, so it follows wherever
+                -- the note moved to.
+                local exitExtra = RR.GetExitNoteExtra and RR:GetExitNoteExtra()
+                if exitExtra and exitExtra ~= "" then
+                    -- Orange "Note:" label, the way the exit note above it
+                    -- carries its own magenta one, so the two lines read as
+                    -- a pair of labelled notes rather than a run-on.
+                    panel.exitNoteExtra:SetText(
+                        OrangeText(RR.L["Note:"]) .. " "
+                        .. HighlightNames(exitExtra))
+                    panel.exitNoteExtra:SetTextColor(1, 1, 1)
+                    SetBodyFont(panel.exitNoteExtra, exitFontSize, "")
+                    panel.exitNoteExtra:Show()
+                else
+                    panel.exitNoteExtra:SetText("")
+                    panel.exitNoteExtra:Hide()
+                end
             else
-                panel.next:SetText(RR.L["|cffff9333Routing data not yet captured for this raid.|r"])
+                -- Dungeons list and load before their routes exist, by
+                -- design -- browsing, the toaster and boss progress all
+                -- work meanwhile -- so they say so rather than reading as
+                -- missing data.
+                if raid.kind == "dungeon" then
+                    panel.next:SetText(("|cffff9333%s|r"):format(
+                        (RR.L["%s is under development."]):format(
+                            RR:GetLocalizedRaidName(raid) or raid.name)))
+                else
+                    panel.next:SetText(RR.L["|cffff9333Routing data not yet captured for this instance.|r"])
+                end
                 panel.exitNote:SetText("")
                 panel.exitNote:Hide()
+                panel.exitNoteExtra:SetText("")
+                panel.exitNoteExtra:Hide()
                 panel.skipReturn:SetText("")
                 panel.skipReturn:Hide()
                 panel.skipNote:SetText("")
@@ -10396,16 +13157,51 @@ function UI.Update()
             panel.mapBtn:Enable()
             panel.mapBtn:SetAlpha(1)
 
+            -- Hang off the LOWEST block that actually rendered. skipNote
+            -- is not always the bottom of its pair: a lockout-less dungeon
+            -- shows the comeback line with no note under it, and skipping
+            -- straight to panel.next there drew the list over that line.
+            -- skipNote carries a 12px indent of its own, hence the -12.
             panel.listHeader:ClearAllPoints()
-            if panel.exitNote:IsShown() then
+            if panel.exitNoteExtra:IsShown() then
+                panel.listHeader:SetPoint("TOPLEFT", panel.exitNoteExtra, "BOTTOMLEFT", 0, -12)
+            elseif panel.exitNote:IsShown() then
                 panel.listHeader:SetPoint("TOPLEFT", panel.exitNote, "BOTTOMLEFT", 0, -12)
             elseif panel.skipNote:IsShown() then
                 panel.listHeader:SetPoint("TOPLEFT", panel.skipNote, "BOTTOMLEFT", -12, -12)
+            elseif panel.skipReturn:IsShown() then
+                panel.listHeader:SetPoint("TOPLEFT", panel.skipReturn, "BOTTOMLEFT", 0, -12)
             else
                 panel.listHeader:SetPoint("TOPLEFT", panel.next, "BOTTOMLEFT", 0, -12)
             end
-            panel.listHeader:SetText(RR.L["|cff9d9d9dWhere to next:|r"])
-            RefreshIdleList()
+            if not routeComplete then
+                -- Standing in an instance that has no route at all. The
+                -- run is not over, so offering somewhere to go next would
+                -- be wrong; the kill checklist is what the player is
+                -- actually doing.
+                panel.listHeader:SetText(RR.L["Boss Progress"])
+                ReleaseIdleListLines()
+                UI.ReleaseIdlePillCells()
+                ReleaseExpansionToggleButtons()
+                ReleaseEntranceButtons()
+                panel.ReleaseWingStrikes()
+                panel.ReleaseWingToggleButtons()
+                UI.RenderBossProgressList()
+            else
+                panel.listHeader:SetText(RR.L["|cff9d9d9dWhere to next:|r"])
+                ReleaseProgressListLines()
+                -- Suggest more of what was just finished: a completed
+                -- dungeon offers dungeons, not the raid list. The toggle
+                -- is not on screen in this state, so the list has to pick
+                -- the sensible side itself; the choice carries into the
+                -- idle picker, where the toggle can change it.
+                if raid then
+                    RR.state = RR.state or {}
+                    RR.state.idleListMode = (raid.kind == "dungeon")
+                        and "dungeon" or "raid"
+                end
+                RefreshIdleList()
+            end
         end
     else
         -- Idle state. The "RetroRuns v..." line is intentionally blank --
@@ -10430,16 +13226,24 @@ function UI.Update()
                 ("|cffffff00Detected:|r %s"):format(displayName))
             panel.next:SetText(RR.L["Type |cffffffff/rr|r to load navigation."])
         else
-            -- Single line. The "Travel to..." text by itself implies
-            -- "you're not in a supported raid yet" -- a separate
-            -- "No supported legacy raid detected" line was redundant.
-            panel.progress:SetText(RR.L["Travel to a supported raid to begin."])
+            -- Single line: the prompt sentence with the RAID | DUNGEON
+            -- mode toggle embedded where its %s sits. The progress
+            -- FontString stays empty and only lends its anchor point.
+            panel.progress:SetText("")
+            local modeLine = UI.EnsureIdleModeLine()
+            modeLine.Layout(RR:GetSetting("fontSize", 12))
+            modeLine.Refresh()
+            -- The minimized bar shows no body content; the line would
+            -- otherwise float outside it.
+            modeLine.SetShown(not UI.IsMinimized())
             panel.next:SetText("")
         end
 
         panel.travel:SetText("")
         panel.exitNote:SetText("")
         panel.exitNote:Hide()
+        panel.exitNoteExtra:SetText("")
+        panel.exitNoteExtra:Hide()
         panel.skipReturn:SetText("")
         panel.skipReturn:Hide()
         panel.skipNote:SetText("")
@@ -10455,14 +13259,30 @@ function UI.Update()
         panel.encounter.specialLoot:Hide()
         panel.transmog:SetText("")
         panel.transmog:EnableMouse(false)
-        -- Re-anchor listHeader directly below "Travel to..." (panel.progress)
-        -- so the supported-raids list sits tight against the prompt.
-        -- The intermediate widgets (next, travel, encounter, transmog)
-        -- are all empty in idle state but their anchor offsets still
-        -- accumulate as visible gap, hence this re-anchor.
+        -- Re-anchor listHeader directly below the prompt line so the
+        -- supported list sits tight against it. The intermediate widgets
+        -- (next, travel, encounter, transmog) are all empty in idle state
+        -- but their anchor offsets still accumulate as visible gap, hence
+        -- this re-anchor. When the mode-toggle sentence is shown, the
+        -- progress FontString is empty (zero height), so the anchor comes
+        -- from the sentence's prefix instead -- the extra 4px clears the
+        -- toggle words' underline.
         panel.listHeader:ClearAllPoints()
-        panel.listHeader:SetPoint("TOPLEFT", panel.progress, "BOTTOMLEFT", 0, -8)
-        panel.listHeader:SetText(RR.L["|cff9d9d9dCurrently supported:|r"])
+        if panel.idleModeLine and panel.idleModeLine.prefix:IsShown() then
+            -- Two single-axis anchors: vertical from the prompt line,
+            -- horizontal from the body column. The prompt is CENTERED, so
+            -- taking both from it would indent the whole list by half the
+            -- prompt's slack.
+            panel.listHeader:SetPoint("TOP",
+                panel.idleModeLine.prefix, "BOTTOM", 0, -12)
+            panel.listHeader:SetPoint("LEFT", panel.progress, "LEFT", 0, 0)
+        else
+            panel.listHeader:SetPoint("TOPLEFT", panel.progress, "BOTTOMLEFT", 0, -8)
+        end
+        -- The prompt above already says what the list is; a second
+        -- heading only repeated it. Emptied rather than removed: the
+        -- list anchors to it, and the in-raid branch still captions it.
+        panel.listHeader:SetText("")
         RefreshIdleList()
         -- Hide rather than mouse-disable: a disabled Button still occupies
         -- layout space, and siblings at the same Z-level interfere with mouse
@@ -10628,6 +13448,78 @@ StaticPopupDialogs["RETRORUNS_DISCORD_URL"] = {
     EditBoxOnEnterPressed = function(self) self:GetParent():Hide() end,
     EditBoxOnEscapePressed = function(self) self:GetParent():Hide() end,
 }
+
+UI.URL_GITHUB_ISSUES = "https://github.com/PhotekWoW/RetroRuns/issues"
+
+-- A footer line reading "Please [Report] <something>!", where [Report] is a
+-- real button opening the same copy-URL popup the Settings page's bug link
+-- uses. Built from ONE locale string carrying a %s, so a translator gets a
+-- whole sentence and can move the button anywhere in it; the format is split
+-- at the %s and the three pieces chain right-to-left from the caller's
+-- anchor. Returns the table so the caller can font and position it.
+function UI.CreateReportLine(parent, formatKey, tooltipKey)
+    local line = {}
+    local prefixText, suffixText = RR.L[formatKey]:match("^(.-)%%s(.*)$")
+    if not prefixText then prefixText, suffixText = RR.L[formatKey], "" end
+
+    line.suffix = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    line.suffix:SetText("|cff9d9d9d" .. suffixText .. "|r")
+
+    line.button = CreateFrame("Button", nil, parent)
+    line.button:RegisterForClicks("LeftButtonUp")
+    line.label = line.button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    line.label:SetPoint("CENTER")
+    line.label:SetText("|cff" .. C_PINK_HEX .. RR.L["[Report]"] .. "|r")
+
+    line.prefix = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    line.prefix:SetText("|cff9d9d9d" .. prefixText .. "|r")
+
+    line.button:SetScript("OnClick", function()
+        StaticPopup_Show("RETRORUNS_BUG_URL", nil, nil,
+            { url = UI.URL_GITHUB_ISSUES })
+    end)
+    line.button:SetScript("OnEnter", function(self)
+        line.label:SetText("|cffffffff" .. RR.L["[Report]"] .. "|r")
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(RR.L[tooltipKey], 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    line.button:SetScript("OnLeave", function()
+        line.label:SetText("|cff" .. C_PINK_HEX .. RR.L["[Report]"] .. "|r")
+        GameTooltip:Hide()
+    end)
+    return line
+end
+
+-- Fonts the three pieces and chains them from a bottom corner. Split out
+-- from creation so a refresh can re-apply the player's font size without
+-- rebuilding the widgets. `align` is "LEFT" or "RIGHT" (default): a
+-- right-aligned line chains leftward from the right edge, a left-aligned one
+-- chains rightward from the left.
+function UI.LayoutReportLine(line, fontSize, anchorFrame, xOffset, yOffset, align)
+    SetBodyFont(line.prefix, fontSize, "")
+    SetBodyFont(line.label,  fontSize, "")
+    SetBodyFont(line.suffix, fontSize, "")
+
+    line.button:SetSize((line.label:GetStringWidth() or 40) + 2,
+                        (line.label:GetStringHeight() or fontSize) + 4)
+    line.prefix:ClearAllPoints()
+    line.button:ClearAllPoints()
+    line.suffix:ClearAllPoints()
+
+    if align == "LEFT" then
+        line.prefix:SetPoint("BOTTOMLEFT", anchorFrame, "BOTTOMLEFT",
+            xOffset, yOffset)
+        line.button:SetPoint("LEFT", line.prefix, "RIGHT", 0, 0)
+        line.suffix:SetPoint("LEFT", line.button, "RIGHT", 0, 0)
+    else
+        line.suffix:SetPoint("BOTTOMRIGHT", anchorFrame, "BOTTOMRIGHT",
+            xOffset, yOffset)
+        line.button:SetPoint("RIGHT", line.suffix, "LEFT", 0, 0)
+        line.prefix:SetPoint("RIGHT", line.button, "LEFT", 0, 0)
+    end
+end
+
 -- Skip-trigger popup, shown from each Skips-window row's info icon.
 -- Body: Quest / Quest IDs / Skip Details labeled lines. Quest IDs
 -- are derived from raid.skipQuests at render time (clickable hyperlinks
@@ -10674,7 +13566,7 @@ local function GetOrCreateSkipDetailFrame()
     body:SetPoint("TOPLEFT", detailFrame, "TOPLEFT", 16, -40)
     detailFrame.bodyText = body
 
-    local closeBtn = CreateFrame("Button", nil, detailFrame, "UIPanelCloseButton")
+    local closeBtn = UI.MakeRetroCloseButton(detailFrame)
     closeBtn:SetPoint("TOPRIGHT", detailFrame, "TOPRIGHT", -4, -4)
     closeBtn:SetScript("OnClick", function() detailFrame:Hide() end)
 
@@ -11342,8 +14234,10 @@ local function BuildAchievementRows(raid)
         table.insert(rows, { kind = "spacer" })
     end
 
-    -- 2. Column header row (always shown so users can read the table).
-    table.insert(rows, { kind = "header" })
+    -- 2. Column header row. Held back until the achievement rows are known:
+    --    an instance with nothing tracked shows a sentence instead of column
+    --    headers over an empty body, and a lone header is worse than none.
+    local headerIndex = #rows + 1
 
     -- 3. Per-boss rows in encounter order. Bosses with multiple achievements
     --    expand to multiple rows (one per achievement); bosses with none
@@ -11380,6 +14274,13 @@ local function BuildAchievementRows(raid)
             soloable        = ach.soloable,
             meta            = ach.meta,
         })
+    end
+
+    for index = headerIndex, #rows do
+        if rows[index].kind == "achRow" then
+            table.insert(rows, headerIndex, { kind = "header" })
+            break
+        end
     end
 
     return rows
@@ -11433,6 +14334,10 @@ end
 achState = {
     expansion = nil,
     raidKey   = nil,
+    -- Which instance table the window reads, same vocabulary as
+    -- browserState. Held separately so the two windows can sit on
+    -- different instances at once.
+    instanceKind = "raid",
 }
 
 -- Pick sensible default selection on first open. Mirrors EnsureBrowserDefaults
@@ -11440,27 +14345,191 @@ achState = {
 -- Defaults: current raid if the player is in one, else the first raid in the
 -- newest expansion that has data.
 local function EnsureAchDefaults()
-    local byExpansion, expansions = EnumerateRaids()
+    -- Prefer the instance the player is standing in, dungeon or raid, and
+    -- adopt its kind so the Type dropdown opens on the right table.
+    if not achState.raidKey and RR.currentRaid then
+        achState.instanceKind = (RR.currentRaid.kind == "dungeon")
+            and "dungeon" or "raid"
+        achState.raidKey   = UI.BrowserKeyOf(RR.currentRaid)
+        achState.expansion = RR.currentRaid.expansion
+    end
+
+    local byExpansion, expansions = UI.EnumerateInstances(achState.instanceKind)
     if #expansions == 0 then return end
 
-    -- Prefer the player's current raid if they're standing in one.
-    if not achState.raidKey then
-        local currentID = RR.currentRaid and RR.currentRaid.instanceID
-        local currentRaid = currentID and RR:GetRaidByInstanceID(currentID)
-        if currentRaid then
-            achState.raidKey   = currentID
-            achState.expansion = currentRaid.expansion
-        end
-    end
-    -- Fall back to the first raid in the first expansion.
-    if not achState.expansion then
+    -- Fall back to the first instance in the first expansion.
+    if not achState.expansion or not byExpansion[achState.expansion] then
         achState.expansion = expansions[1]
     end
     if not achState.raidKey then
-        local firstRaid = byExpansion[achState.expansion]
-                          and byExpansion[achState.expansion][1]
-        if firstRaid then achState.raidKey = firstRaid.instanceID end
+        local firstInstance = byExpansion[achState.expansion]
+                              and byExpansion[achState.expansion][1]
+        if firstInstance then
+            achState.raidKey = UI.BrowserKeyOf(firstInstance)
+        end
     end
+end
+
+-- Flat name index over both instance tables for the achievements window's
+-- search box: one entry per expansion, instance, glory, glory reward,
+-- achievement, and boss that carries one, each holding the selection that
+-- reaches it. Achievement and glory names come from the client, so they
+-- index localized with the authored name alongside in the search text.
+-- Dropped when the client's achievement list arrives, since those names
+-- read empty before it does.
+UI.BuildAchSearchIndex = function()
+    if UI._achSearchIndex then return UI._achSearchIndex end
+    local index = {}
+    local function Add(rank, label, context, searchText, entry)
+        entry.rank       = rank
+        entry.label      = label
+        entry.labelLower = label:lower()
+        entry.display = context
+            and (label .. " |cff888888-- " .. context .. "|r")
+            or label
+        entry.search = searchText:lower()
+        index[#index + 1] = entry
+    end
+    for _, instanceKind in ipairs({ "raid", "dungeon" }) do
+        local kindLabel = (instanceKind == "dungeon")
+            and RR.L["Dungeons"] or RR.L["Raids"]
+        local byExpansion = UI.EnumerateInstances(instanceKind)
+        for expansionName, instances in pairs(byExpansion) do
+            if instances[1] then
+                Add(0, RR.L[expansionName], kindLabel,
+                    RR.L[expansionName] .. " " .. expansionName,
+                    { instanceKind = instanceKind, expansion = expansionName,
+                      key = UI.BrowserKeyOf(instances[1]) })
+            end
+            for _, instance in ipairs(instances) do
+                local key = UI.BrowserKeyOf(instance)
+                local instanceName = RR:GetLocalizedRaidName(instance)
+                                     or instance.name or "?"
+                Add(1, instanceName, RR.L[expansionName],
+                    instanceName .. " " .. (instance.name or ""),
+                    { instanceKind = instanceKind, expansion = expansionName,
+                      key = key })
+
+                local metas = instance.gloryMetas
+                    or (instance.gloryMeta and { instance.gloryMeta })
+                    or {}
+                for _, meta in ipairs(metas) do
+                    if meta.id then
+                        local _, gloryName = GetAchievementInfo(meta.id)
+                        gloryName = gloryName or meta.name
+                                    or (RR.L["Glory ID "] .. meta.id)
+                        Add(2, gloryName, instanceName,
+                            gloryName .. " " .. (meta.name or ""),
+                            { instanceKind = instanceKind,
+                              expansion = expansionName, key = key,
+                              gloryID = meta.id })
+
+                        -- The mount, item or title a glory grants. Players
+                        -- hunt these by name more often than by the meta's,
+                        -- so the reward earns a result of its own pointing
+                        -- at the same glory block. One entry, not three:
+                        -- the mount spell and the item that teaches it are
+                        -- the same reward under two names.
+                        local mountName
+                        if meta.rewardMountSpellID and C_Spell
+                           and C_Spell.GetSpellInfo then
+                            local info =
+                                C_Spell.GetSpellInfo(meta.rewardMountSpellID)
+                            if type(info) == "table" then
+                                mountName = info.name
+                            end
+                        end
+                        local rewardLabel = (meta.rewardName
+                            and RR.L[meta.rewardName]) or mountName
+                        if rewardLabel then
+                            local rewardSearch = rewardLabel
+                                .. " " .. (meta.rewardName or "")
+                                .. " " .. (mountName or "")
+                                .. " " .. (meta.rewardTitle or "")
+                                .. " " .. (meta.rewardTitle
+                                           and RR.L[meta.rewardTitle] or "")
+                            Add(2, rewardLabel, gloryName, rewardSearch,
+                                { instanceKind = instanceKind,
+                                  expansion = expansionName, key = key,
+                                  gloryID = meta.id })
+                        end
+                    end
+                end
+
+                for _, boss in ipairs(instance.bosses or {}) do
+                    local bossName = RR:GetLocalizedBossName(boss)
+                                     or boss.name or "?"
+                    local bossHasRows = false
+                    for _, ach in ipairs(boss.achievements or {}) do
+                        bossHasRows = true
+                        local _, achName = GetAchievementInfo(ach.id)
+                        achName = achName or ach.name or ("ID " .. ach.id)
+                        Add(3, achName, bossName .. ", " .. instanceName,
+                            achName .. " " .. (ach.name or ""),
+                            { instanceKind = instanceKind,
+                              expansion = expansionName, key = key,
+                              achievementID = ach.id, bossName = bossName })
+                    end
+                    -- A boss with nothing tracked renders no row, so
+                    -- indexing its name would land the window on an
+                    -- instance with nothing to show for the match.
+                    if bossHasRows then
+                        Add(4, bossName, instanceName,
+                            bossName .. " " .. (boss.name or ""),
+                            { instanceKind = instanceKind,
+                              expansion = expansionName, key = key,
+                              bossName = bossName })
+                    end
+                end
+
+                for _, ach in ipairs(instance.raidAchievements or {}) do
+                    local _, achName = GetAchievementInfo(ach.id)
+                    achName = achName or ach.name or ("ID " .. ach.id)
+                    Add(3, achName, instanceName,
+                        achName .. " " .. (ach.name or ""),
+                        { instanceKind = instanceKind,
+                          expansion = expansionName, key = key,
+                          achievementID = ach.id })
+                end
+            end
+        end
+    end
+    UI._achSearchIndex = index
+    return index
+end
+
+-- Case-insensitive substring query against the index. Returns up to
+-- maxResults entries plus the count left off, or nil when the query is
+-- under two characters. Ordered by match closeness first, then expansions,
+-- instances, glories, achievements, bosses, then name. Same shape as
+-- UI.QueryTmogSearch.
+UI.QueryAchSearch = function(query, maxResults)
+    query = (query or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+    if #query < 2 then return nil end
+    local matches = {}
+    for _, entry in ipairs(UI.BuildAchSearchIndex()) do
+        local position = entry.search:find(query, 1, true)
+        if position then
+            entry.matchQuality = (entry.labelLower == query and 3)
+                or (position == 1 and 2) or 1
+            matches[#matches + 1] = entry
+        end
+    end
+    table.sort(matches, function(a, b)
+        if a.matchQuality ~= b.matchQuality then
+            return a.matchQuality > b.matchQuality
+        end
+        if a.rank ~= b.rank then return a.rank < b.rank end
+        return a.label < b.label
+    end)
+    local overflow = 0
+    if #matches > maxResults then
+        overflow = #matches - maxResults
+        for extraIndex = #matches, maxResults + 1, -1 do
+            matches[extraIndex] = nil
+        end
+    end
+    return matches, overflow
 end
 
 -- Layout constants for the achievements row table. Matches the skips
@@ -11472,6 +14541,11 @@ end
 -- left, Achievement is the wide flex column, Boss is the right-side
 -- column, and the Wowhead button anchors near the right edge.
 local ACH_WINDOW_WIDTH       = 510
+-- Narrower floor for an instance with nothing tracked: there are no row
+-- columns to hold, so the frame sizes to the empty note rather than
+-- reserving a table's worth of width around a sentence. On the UI table
+-- because the file sits at Lua 5.1's 200-local ceiling.
+UI.ACH_EMPTY_WINDOW_WIDTH    = 400
 local ACH_WINDOW_MIN_HEIGHT  = 200
 local ACH_WINDOW_MAX_HEIGHT  = 700
 
@@ -11600,17 +14674,27 @@ local function GetAchRowSlot(parent, idx)
         slot.divider:SetSnapToPixelGrid(false)
     end
 
-    -- "Current boss" highlight: a faint full-row blue tint plus a
-    -- brighter left-edge accent bar. BORDER draw layer (not BACKGROUND)
-    -- so they render ABOVE the frame's own backdrop -- with BACKGROUND,
-    -- the panel's opaque chrome was occluding the tint and the
-    -- highlight was only visible when window opacity was turned down.
+    -- "Current boss" band: the shared attention flash -- bright on
+    -- arrival, then a slow fade to nothing, with the left-edge accent
+    -- bar staying as the persistent marker. BORDER draw layer (not
+    -- BACKGROUND) so both render ABOVE the frame's own backdrop -- with
+    -- BACKGROUND, the panel's opaque chrome was occluding the tint and
+    -- the band was only visible when window opacity was turned down.
     -- BORDER still sits below ARTWORK (dividers) and OVERLAY (text), so
-    -- the highlight reads as a tinted band BEHIND the row's content.
-    -- Tint alpha bumped from 0.10 to 0.22 for visibility against the
-    -- standard opaque panel; accent saturation bumped to match.
+    -- the band reads as a tint BEHIND the row's content.
     slot.highlight = parent:CreateTexture(nil, "BORDER")
-    slot.highlight:SetColorTexture(0.30, 0.65, 1.0, 0.22)
+    slot.highlight:SetColorTexture(UI.FLASH_BAND_R, UI.FLASH_BAND_G,
+        UI.FLASH_BAND_B, UI.FLASH_BAND_ALPHA)
+    slot.highlightFade = slot.highlight:CreateAnimationGroup()
+    local highlightAlpha = slot.highlightFade:CreateAnimation("Alpha")
+    highlightAlpha:SetFromAlpha(1)
+    highlightAlpha:SetToAlpha(0)
+    highlightAlpha:SetStartDelay(UI.FLASH_FADE_DELAY)
+    highlightAlpha:SetDuration(UI.FLASH_FADE_DURATION)
+    local highlightTexture = slot.highlight
+    slot.highlightFade:SetScript("OnFinished", function()
+        highlightTexture:Hide()
+    end)
     slot.accent = parent:CreateTexture(nil, "BORDER")
     slot.accent:SetColorTexture(0.45, 0.80, 1.0, 1.0)
     slot.accent:SetWidth(3)
@@ -11688,9 +14772,10 @@ GetOrCreateAchievementsWindow = function()
     title:SetShadowOffset(1, -1)
     title:SetShadowColor(0, 0, 0, 1)
 
-    local closeBtn = CreateFrame("Button", nil, achFrame, "UIPanelCloseButton")
+    local closeBtn = UI.MakeRetroCloseButton(achFrame)
     closeBtn:SetPoint("TOPRIGHT", -4, -4)
     closeBtn:SetScript("OnClick", function() achFrame:Hide() end)
+    achFrame.closeBtn = closeBtn
 
     -- Two cascading dropdowns: Expansion / Raid. Boss-level selection
     -- was removed when the window switched to a full-raid table view --
@@ -11699,17 +14784,14 @@ GetOrCreateAchievementsWindow = function()
     -- "Raid:") on the left, bars to its right, selected-value text
     -- left-justified, and bar widths sized to the longest content.
     local function MakeDD(name, width, parent, labelText)
-        local dd = CreateFrame("Frame", "RetroRunsAch" .. name .. "DD", parent,
-                               "UIDropDownMenuTemplate")
-        UIDropDownMenu_SetWidth(dd, width)
-        -- Left-justify the selected-value text (template default is RIGHT).
-        local fs = _G[dd:GetName() .. "Text"]
-        if fs then fs:SetJustifyH("LEFT") end
-        -- Optional caption to the left of the bar.
+        local dd = CreateFrame("DropdownButton", "RetroRunsAch" .. name .. "DD", parent,
+                               "WowStyle1DropdownTemplate")
+        dd:SetWidth(width)
+        UI.StyleDropdown(dd)
         if labelText then
             local lbl = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
             lbl:SetText(labelText)
-            lbl:SetJustifyH("LEFT")
+            lbl:SetJustifyH("RIGHT")
             dd.label = lbl
         end
         return dd
@@ -11726,38 +14808,243 @@ GetOrCreateAchievementsWindow = function()
     local capMeasure = achFrame:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
     capMeasure:Hide()
     local LABEL_W = 0
-    for _, cap in ipairs({ RR.L["Exp:"], RR.L["Raid:"], RR.L["Boss:"], RR.L["Class:"] }) do
+    for _, cap in ipairs({ RR.L["Exp:"], RR.L["Type:"], RR.L["Inst:"], RR.L["Boss:"], RR.L["Class:"] }) do
         capMeasure:SetText(cap)
         local textWidth = capMeasure:GetStringWidth() or 0
         if textWidth > LABEL_W then LABEL_W = textWidth end
     end
     LABEL_W = math.ceil(LABEL_W)
-    -- The dropdown template frame has ~16px of non-visible left inset before
-    -- the bar's visible edge, so to put the VISIBLE bar at a target X we
-    -- offset the frame left by DD_INSET.
-    local DD_INSET = 16
+    -- The bar's frame edge is its visible edge.
+    local DD_INSET = 0
 
     local ddExp  = MakeDD("Expansion", 140, achFrame, RR.L["Exp:"])
-    local ddRaid = MakeDD("Raid",      220, achFrame, RR.L["Raid:"])
+    local ddType = MakeDD("InstanceKind", 140, achFrame, RR.L["Type:"])
+    local ddRaid = MakeDD("Raid",      220, achFrame, RR.L["Inst:"])
 
     -- Bars: stacked. Visible left edge sits just right of the caption column;
     -- subtract DD_INSET so the frame's offset lands the visible bar there.
+    -- Order matches the transmog browser: Exp -> Type -> Raid.
+    -- Each bar steps slightly right of the one above so the left edges
+    -- cascade top-to-bottom, matching the transmog browser.
     local barVisibleLeft = LABEL_LEFT + LABEL_W + LABEL_GAP
     local barLeft = barVisibleLeft - DD_INSET
-    ddExp:SetPoint("TOPLEFT",  achFrame,     "TOPLEFT",     barLeft, -32)
-    ddRaid:SetPoint("TOPLEFT", ddExp, "BOTTOMLEFT",  0,       4)
+    local DD_STEP = 5
+    ddExp:SetPoint("TOPLEFT",  achFrame, "TOPLEFT",    barLeft, -32)
+    ddType:SetPoint("TOPLEFT", ddExp,  "BOTTOMLEFT", DD_STEP,  -2)
+    ddRaid:SetPoint("TOPLEFT", ddType, "BOTTOMLEFT", DD_STEP,  -2)
 
-    -- Labels: left-aligned at LABEL_LEFT, vertically aligned to each bar.
+    -- Labels: anchored to each bar's own left edge so they cascade in step
+    -- with the indented bars, rather than sitting in one fixed column.
     local function anchorLabel(dd)
         if not dd.label then return end
         dd.label:ClearAllPoints()
-        dd.label:SetPoint("LEFT", achFrame, "LEFT", LABEL_LEFT, 2)
-        dd.label:SetPoint("TOP",  dd, "TOP",  0, -6)
+        dd.label:SetPoint("RIGHT", dd, "LEFT", DD_INSET - LABEL_GAP, 0)
         dd.label:SetWidth(LABEL_W)
     end
-    anchorLabel(ddExp); anchorLabel(ddRaid)
+    anchorLabel(ddExp); anchorLabel(ddType); anchorLabel(ddRaid)
 
     achFrame.ddExp, achFrame.ddRaid = ddExp, ddRaid
+    achFrame.ddType = ddType
+
+    -- Search: a magnifying glass after the title toggles a floating input
+    -- over the dropdown stack. Matches expansion, instance, glory, reward,
+    -- achievement and boss names across raids and dungeons; picking a
+    -- result drives the dropdowns to it and lands on the row. Same shape as
+    -- the transmog browser's, minus its hover-grace timers -- this window
+    -- has none.
+    do
+        local searchIcon = CreateFrame("Button", nil, achFrame)
+        searchIcon:SetSize(20, 20)
+        -- Dropped 2px: the title's glyphs sit low in their box, so a true
+        -- LEFT-RIGHT center reads high next to them.
+        searchIcon:SetPoint("LEFT", title, "RIGHT", 6, -2)
+        searchIcon:SetNormalTexture("Interface\\Common\\UI-Searchbox-Icon")
+        searchIcon:SetHighlightTexture("Interface\\Common\\UI-Searchbox-Icon",
+            "ADD")
+        local iconTexture = searchIcon:GetNormalTexture()
+        if iconTexture then
+            iconTexture:SetVertexColor(0.95, 0.35, 0.78)
+        end
+        UI.AttachSearchSparkle(searchIcon)
+        achFrame.searchIcon = searchIcon
+
+        local searchBox = CreateFrame("EditBox", "RetroRunsAchSearchBox",
+            achFrame, "InputBoxTemplate")
+        searchBox:SetAutoFocus(false)
+        searchBox:SetHeight(20)
+        -- On the title bar, right of the glass, and stretched to the close
+        -- button rather than given a fixed width -- at 180 the right edge
+        -- floated and ran under the X. Both of InputBoxTemplate's end
+        -- textures extend ~8px past the frame, so both gaps are authored
+        -- wide: 12 clears the glass on the left, 10 clears the X.
+        searchBox:SetPoint("LEFT", searchIcon, "RIGHT", 12, 2)
+        searchBox:SetPoint("RIGHT", achFrame.closeBtn, "LEFT", -10, 0)
+        searchBox:SetFrameLevel(achFrame:GetFrameLevel() + 40)
+        searchBox:SetMaxLetters(60)
+        searchBox.hint = searchBox:CreateFontString(nil, "OVERLAY",
+            "GameFontDisableSmall")
+        searchBox.hint:SetPoint("LEFT", 2, 0)
+        searchBox.hint:SetText(RR.L["Search achievements"])
+        searchBox:Hide()
+        achFrame.searchBox = searchBox
+
+        local function CloseSearch()
+            searchBox:SetText("")
+            searchBox:ClearFocus()
+            searchBox:Hide()
+            achFrame.searchResults:Hide()
+        end
+        achFrame.CloseSearch = CloseSearch
+
+        searchIcon:SetScript("OnClick", function()
+            if searchBox:IsShown() then
+                CloseSearch()
+            else
+                searchBox:Show()
+                searchBox:SetFocus()
+            end
+        end)
+        searchIcon:SetScript("OnEnter", function(self)
+            -- Suppressed once the box is open; see the minimized bar's copy.
+            if searchBox:IsShown() then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(RR.L["Search"], 1, 1, 1)
+            GameTooltip:Show()
+        end)
+        searchIcon:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+        local results = CreateFrame("Frame", nil, achFrame, "BackdropTemplate")
+        results:SetBackdrop({
+            bgFile   = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 16,
+            insets = { left = 3, right = 3, top = 3, bottom = 3 },
+        })
+        results:SetBackdropColor(0.05, 0.05, 0.05, 0.97)
+        results:SetPoint("TOPLEFT", searchBox, "BOTTOMLEFT", -6, -2)
+        results:SetFrameLevel(achFrame:GetFrameLevel() + 40)
+        results:EnableMouse(true)
+        results:Hide()
+        achFrame.searchResults = results
+
+        local RESULT_MAX = 8
+        local RESULT_ROW_H = 16
+        local RESULT_PAD = 8
+        local rowButtons = {}
+        local footLine = results:CreateFontString(nil, "OVERLAY",
+            "GameFontDisableSmall")
+        footLine:SetJustifyH("LEFT")
+        footLine:Hide()
+
+        -- Drive the dropdowns to the entry's instance and mark the row it
+        -- named, which RefreshContent scrolls to and flashes. The cache has
+        -- to be invalidated even when the instance does not change: a hit in
+        -- the instance already on screen produces identical rows, and the
+        -- fingerprint short-circuit would skip the render that does the
+        -- landing.
+        local function SelectSearchResult(entry)
+            if not entry then return end
+            achState.instanceKind = entry.instanceKind
+            achState.expansion    = entry.expansion
+            achState.raidKey      = entry.key
+            achFrame._searchTarget = (entry.achievementID or entry.gloryID
+                or entry.bossName) and {
+                    achievementID = entry.achievementID,
+                    gloryID       = entry.gloryID,
+                    bossName      = entry.bossName,
+                } or nil
+            CloseSearch()
+            UI.InvalidateAchievementsCache()
+            achFrame:RefreshAll()
+        end
+
+        local function GetResultButton(idx)
+            local btn = rowButtons[idx]
+            if btn then return btn end
+            btn = CreateFrame("Button", nil, results)
+            btn:SetHeight(RESULT_ROW_H)
+            btn:SetPoint("TOPLEFT", results, "TOPLEFT", RESULT_PAD,
+                -RESULT_PAD - (idx - 1) * RESULT_ROW_H)
+            btn:SetPoint("RIGHT", results, "RIGHT", -RESULT_PAD, 0)
+            local btnText = btn:CreateFontString(nil, "OVERLAY",
+                "GameFontHighlightSmall")
+            btnText:SetPoint("LEFT", 0, 0)
+            btnText:SetJustifyH("LEFT")
+            btn.text = btnText
+            local highlightTex = btn:CreateTexture(nil, "HIGHLIGHT")
+            highlightTex:SetAllPoints()
+            highlightTex:SetColorTexture(1, 1, 1, 0.08)
+            btn:SetScript("OnClick", function(self)
+                if self.entry then SelectSearchResult(self.entry) end
+            end)
+            rowButtons[idx] = btn
+            return btn
+        end
+
+        local function UpdateSearchResults()
+            local matches, overflow =
+                UI.QueryAchSearch(searchBox:GetText(), RESULT_MAX)
+            for _, btn in ipairs(rowButtons) do
+                btn:Hide()
+                btn.entry = nil
+            end
+            footLine:Hide()
+            if not matches then
+                results:Hide()
+                return
+            end
+            local widest = 0
+            local shown = 0
+            for idx, entry in ipairs(matches) do
+                local btn = GetResultButton(idx)
+                btn.entry = entry
+                btn.text:SetText(entry.display)
+                btn:Show()
+                local textWidth = btn.text:GetStringWidth() or 0
+                if textWidth > widest then widest = textWidth end
+                shown = idx
+            end
+            local lines = shown
+            local footText
+            if shown == 0 then
+                footText = RR.L["No matches."]
+            elseif overflow > 0 then
+                footText = (RR.L["+%d more"]):format(overflow)
+            end
+            if footText then
+                footLine:SetText(footText)
+                footLine:ClearAllPoints()
+                footLine:SetPoint("TOPLEFT", results, "TOPLEFT", RESULT_PAD,
+                    -RESULT_PAD - shown * RESULT_ROW_H)
+                footLine:Show()
+                local textWidth = footLine:GetStringWidth() or 0
+                if textWidth > widest then widest = textWidth end
+                lines = lines + 1
+            end
+            results:SetSize(
+                math.min(400, math.max(searchBox:GetWidth() + 12,
+                    widest + RESULT_PAD * 2 + 4)),
+                lines * RESULT_ROW_H + RESULT_PAD * 2)
+            results:Show()
+        end
+
+        searchBox:SetScript("OnTextChanged", function(self, userInput)
+            self.hint:SetShown(self:GetText() == "")
+            if userInput then UpdateSearchResults() end
+        end)
+        searchBox:SetScript("OnEscapePressed", CloseSearch)
+        searchBox:SetScript("OnEnterPressed", function()
+            local firstBtn = rowButtons[1]
+            if firstBtn and firstBtn:IsShown() and firstBtn.entry then
+                SelectSearchResult(firstBtn.entry)
+            end
+        end)
+        achFrame:HookScript("OnHide", function()
+            CloseSearch()
+            achFrame._searchTarget = nil
+            if achFrame.searchFlash then achFrame.searchFlash:Hide() end
+        end)
+    end
 
     -- Size the bars to their content, matching the transmog browser's rule:
     -- each bar fits its longest string plus room for the arrow. Exp uses the
@@ -11772,17 +15059,28 @@ GetOrCreateAchievementsWindow = function()
         return maxW
     end
     achFrame.SizeDropdownsToContent = function(self)
-        local ARROW_PAD = 30
+        local ARROW_PAD = 34
+        -- Measure at the bar's own font so the fit survives a template change.
+        if ddExp.Text and ddExp.Text.GetFontObject and ddExp.Text:GetFontObject() then
+            capMeasure:SetFontObject(ddExp.Text:GetFontObject())
+        end
         local expW = widestAchStringWidth(EXPANSION_ORDER_NEWEST_FIRST)
-        local raidNames = {}
-        for _, raid in pairs(RetroRuns_Data or {}) do
-            if raid.instanceID and raid.instanceID > 0 then
-                raidNames[#raidNames + 1] = RR:GetLocalizedRaidName(raid) or ""
+        -- Measured across BOTH tables so the bar does not resize when the
+        -- Type dropdown switches; dungeon names run longer than raid names.
+        local instanceNames = {}
+        for _, source in ipairs({ RetroRuns_Data, RetroRuns_DungeonData }) do
+            for _, instance in pairs(source or {}) do
+                if instance.instanceID and instance.instanceID > 0 then
+                    instanceNames[#instanceNames + 1] =
+                        RR:GetLocalizedRaidName(instance) or ""
+                end
             end
         end
-        local raidW = widestAchStringWidth(raidNames)
-        UIDropDownMenu_SetWidth(ddExp,  math.ceil(expW)  + ARROW_PAD)
-        UIDropDownMenu_SetWidth(ddRaid, math.ceil(raidW) + ARROW_PAD)
+        local raidW = widestAchStringWidth(instanceNames)
+        local typeW = widestAchStringWidth({ RR.L["Raids"], RR.L["Dungeons"] })
+        ddExp:SetWidth(math.ceil(expW)  + ARROW_PAD)
+        ddType:SetWidth(math.ceil(typeW) + ARROW_PAD)
+        ddRaid:SetWidth(math.ceil(raidW) + ARROW_PAD)
     end
 
     -- Scrollable row region. Wrath-era raids carry enough achievements
@@ -11832,6 +15130,26 @@ GetOrCreateAchievementsWindow = function()
     rowContent:SetSize(10, 10)   -- real size set per layout pass
     rowScroll:SetScrollChild(rowContent)
     achFrame.rowContent = rowContent
+
+    -- Band flashed over the row a search landed on. Lives on the scroll
+    -- child so it travels with the rows, and on BORDER for the same reason
+    -- the current-boss band does: above the backdrop, below the text.
+    achFrame.searchFlash = rowContent:CreateTexture(nil, "BORDER")
+    achFrame.searchFlash:SetColorTexture(UI.FLASH_BAND_R, UI.FLASH_BAND_G,
+        UI.FLASH_BAND_B, UI.FLASH_BAND_ALPHA)
+    achFrame.searchFlash:Hide()
+    achFrame.searchFlashFade = achFrame.searchFlash:CreateAnimationGroup()
+    do
+        local flashAlpha = achFrame.searchFlashFade:CreateAnimation("Alpha")
+        flashAlpha:SetFromAlpha(1)
+        flashAlpha:SetToAlpha(0)
+        flashAlpha:SetStartDelay(UI.FLASH_FADE_DELAY)
+        flashAlpha:SetDuration(UI.FLASH_FADE_DURATION)
+        local flashTexture = achFrame.searchFlash
+        achFrame.searchFlashFade:SetScript("OnFinished", function()
+            flashTexture:Hide()
+        end)
+    end
 
     -- Row content carries achievement/item links, so mirror the window's
     -- hyperlink handlers on the scroll child; link mouse events fire on
@@ -11900,9 +15218,17 @@ GetOrCreateAchievementsWindow = function()
     achFrame.measureFS = achFrame:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     achFrame.measureFS:Hide()
 
-    -- Legend below the table. Two FontStrings: meta-key on the left,
-    -- soloable color key on the right. Splitting them lets the soloable
-    -- key anchor to BOTTOMRIGHT independently of the meta-key text width.
+    -- The meta key sits with the rows, not in the footer: it is parented to
+    -- the row content and anchored to the achievement column, so its diamond
+    -- lands directly under the diamonds in the rows above it.
+    achFrame.metaKey = achFrame.rowContent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    achFrame.metaKey:SetJustifyH("LEFT")
+    achFrame.metaKey:SetText(
+        "|cff9d9d9d|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_3:14:14|t = "
+        .. RR.L["meta criteria"] .. "|r"
+    )
+
+    -- Footer: soloable color key on the left, the report line on the right.
     --
     -- Star colors match GetSoloableStar() exactly:
     --   green  = soloable (any class)
@@ -11912,67 +15238,91 @@ GetOrCreateAchievementsWindow = function()
     achFrame.legendLeft = achFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     achFrame.legendLeft:SetJustifyH("LEFT")
     achFrame.legendLeft:SetText(
-        "|cff9d9d9d|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_3:14:14|t = "
-        .. RR.L["meta criteria"] .. "|r"
-    )
-
-    achFrame.legendRight = achFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    achFrame.legendRight:SetJustifyH("RIGHT")
-    achFrame.legendRight:SetText(
         "|cff9d9d9d" .. RR.L["Soloable: "] .. "|r|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:8:8:0:0:64:64:0:64:0:64:0:255:0|t|cff9d9d9d " .. RR.L["yes"] .. "  |r"
         .. "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:8:8:0:0:64:64:0:64:0:64:255:136:0|t|cff9d9d9d " .. RR.L["kinda"] .. "  |r"
-        .. "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:8:8:0:0:64:64:0:64:0:64:255:51:51|t|cff9d9d9d " .. RR.L["no"] .. "  |r"
-        .. "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:8:8:0:0:64:64:0:64:0:64:40:40:40|t|cff9d9d9d " .. RR.L["unknown"] .. "|r"
+        .. "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:8:8:0:0:64:64:0:64:0:64:255:51:51|t|cff9d9d9d " .. RR.L["no"] .. "|r"
     )
+
+    achFrame.reportLine = UI.CreateReportLine(
+        achFrame, "Please %s outdated solo grades!", "Report a bug (GitHub)")
+
+    -- Shown in place of the table when the selected instance has no tracked
+    -- achievements at all, so the window never presents column headers over
+    -- an empty body.
+    achFrame.emptyNote = achFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    achFrame.emptyNote:SetJustifyH("CENTER")
+    achFrame.emptyNote:SetText(
+        "|cffffffff" .. RR.L["Nothing to track here."] .. "|r\n\n"
+        .. "|cff9d9d9d" .. RR.L["We don't track kill / instance completion achievements unless they are tied to a Meta achievement."] .. "|r"
+    )
+    achFrame.emptyNote:Hide()
 
     achievementsWindow = achFrame
 
     -- ----- Dropdown initializers -----
     achFrame.RefreshDropdowns = function(self)
         EnsureAchDefaults()
-        local byExp, expList = EnumerateRaids()
+        local byExp, expList = UI.EnumerateInstances(achState.instanceKind)
 
-        UIDropDownMenu_Initialize(ddExp, function()
+        ddExp:SetupMenu(function(_, rootDescription)
             for _, expName in ipairs(expList) do
-                local info = UIDropDownMenu_CreateInfo()
-                info.text    = RR.L[expName]
-                info.value   = expName
-                info.checked = (expName == achState.expansion)
-                info.func    = function()
-                    if achState.expansion == expName then return end
-                    achState.expansion = expName
-                    local first = byExp[expName] and byExp[expName][1]
-                    achState.raidKey = first and first.instanceID or nil
-                    achFrame:RefreshAll()
-                end
-                UIDropDownMenu_AddButton(info)
+                UI.MenuRadio(rootDescription, RR.L[expName],
+                    function() return expName == achState.expansion end,
+                    function()
+                        if achState.expansion == expName then return end
+                        achState.expansion = expName
+                        local first = byExp[expName] and byExp[expName][1]
+                        achState.raidKey = first and UI.BrowserKeyOf(first) or nil
+                        achFrame:RefreshAll()
+                    end)
             end
         end)
-        UIDropDownMenu_SetText(ddExp, RR.L[achState.expansion or "(none)"])
+        UI.SetDropdownText(ddExp, RR.L[achState.expansion or "(none)"])
 
-        UIDropDownMenu_Initialize(ddRaid, function()
-            local raids = byExp[achState.expansion] or {}
-            for _, raid in ipairs(raids) do
-                local info = UIDropDownMenu_CreateInfo()
-                info.text    = RR:GetLocalizedRaidName(raid) or "?"
-                info.value   = raid.instanceID
-                info.checked = (raid.instanceID == achState.raidKey)
-                info.func    = function()
-                    if achState.raidKey == raid.instanceID then return end
-                    achState.raidKey = raid.instanceID
-                    -- Use RefreshAll so the dropdown's displayed-text is
-                    -- updated alongside the content. Calling RefreshContent
-                    -- alone would leave the raid dropdown showing the
-                    -- previous raid's name.
+        -- Raids or dungeons. Switching selects straight into the new table
+        -- rather than clearing the key, which EnsureAchDefaults would read
+        -- as first-open and undo by restoring the current instance.
+        ddType:SetupMenu(function(_, rootDescription)
+            for _, kindEntry in ipairs({ { "raid", RR.L["Raids"] },
+                                         { "dungeon", RR.L["Dungeons"] } }) do
+                local kindValue, kindLabel = kindEntry[1], kindEntry[2]
+                UI.MenuRadio(rootDescription, kindLabel,
+                function() return achState.instanceKind == kindValue end,
+                function()
+                    if achState.instanceKind == kindValue then return end
+                    achState.instanceKind = kindValue
+                    local newByExp, newExpList = UI.EnumerateInstances(kindValue)
+                    if not newByExp[achState.expansion] then
+                        achState.expansion = newExpList[1]
+                    end
+                    local first = newByExp[achState.expansion]
+                                  and newByExp[achState.expansion][1]
+                    achState.raidKey = first and UI.BrowserKeyOf(first) or nil
                     achFrame:RefreshAll()
-                end
-                UIDropDownMenu_AddButton(info)
+                end)
+            end
+        end)
+        UI.SetDropdownText(ddType,
+            achState.instanceKind == "dungeon" and RR.L["Dungeons"] or RR.L["Raids"])
+
+        ddRaid:SetupMenu(function(_, rootDescription)
+            local instances = byExp[achState.expansion] or {}
+            for _, instance in ipairs(instances) do
+                local entryKey = UI.BrowserKeyOf(instance)
+                UI.MenuRadio(rootDescription, RR:GetLocalizedRaidName(instance) or "?",
+                    function() return entryKey == achState.raidKey end,
+                    function()
+                        if achState.raidKey == entryKey then return end
+                        achState.raidKey = entryKey
+                        -- RefreshAll so the bar text updates with the content.
+                        achFrame:RefreshAll()
+                    end)
             end
         end)
         local raidName = "(none)"
-        local selRaid = achState.raidKey and RR:GetRaidByInstanceID(achState.raidKey)
+        local selRaid = UI.InstanceByKindKey(achState.instanceKind, achState.raidKey)
         if selRaid then raidName = RR:GetLocalizedRaidName(selRaid) or "?" end
-        UIDropDownMenu_SetText(ddRaid, raidName)
+        UI.SetDropdownText(ddRaid, raidName)
     end
 
     -- ----- Row-table refresh -----
@@ -11980,8 +15330,16 @@ GetOrCreateAchievementsWindow = function()
     -- window. Same shape as RefreshSkipsContent.
     achFrame.RefreshContent = function(self)
         if self.SizeDropdownsToContent then self:SizeDropdownsToContent() end
-        local raid = achState.raidKey and RR:GetRaidByInstanceID(achState.raidKey) or nil
+        local raid = UI.InstanceByKindKey(achState.instanceKind, achState.raidKey)
         local rows = BuildAchievementRows(raid)
+
+        -- An instance with nothing tracked gets a sentence instead of a
+        -- header row over an empty body. Glory blocks count as content, so
+        -- the test is for achievement rows specifically.
+        local hasAchievements = false
+        for _, row in ipairs(rows) do
+            if row.kind == "achRow" then hasAchievements = true; break end
+        end
 
         -- Determine the current route boss for the displayed raid (if
         -- any). The highlight only fires when the achievements window
@@ -12011,6 +15369,20 @@ GetOrCreateAchievementsWindow = function()
             return
         end
         lastAchRowsFingerprint = fp
+
+        -- Current-boss band flash: re-arms when the current boss changes
+        -- (and on window open, which clears the key). While the flash
+        -- window is open the band shows and fades; after it expires,
+        -- re-renders leave only the accent bar.
+        local flashRestart = false
+        if achFrame._bossFlashKey ~= currentBossName then
+            achFrame._bossFlashKey = currentBossName
+            achFrame._bossFlashUntil = currentBossName
+                and (GetTime() + UI.FLASH_FADE_DELAY + UI.FLASH_FADE_DURATION)
+                or 0
+            flashRestart = currentBossName ~= nil
+        end
+        local flashActive = (achFrame._bossFlashUntil or 0) > GetTime()
 
         HideAllAchSlots()
 
@@ -12107,7 +15479,27 @@ GetOrCreateAchievementsWindow = function()
         local ACH_SCROLLBAR_GUTTER = 28
         local wowheadColumnW = ACH_WOWHEAD_BTN_W + ACH_WOWHEAD_RIGHT_INSET + 20
         local windowW = colBossX + colBossW + wowheadColumnW
-        windowW = math.max(windowW, ACH_WINDOW_WIDTH)
+        -- An instance whose table is entirely empty REPLACES that width
+        -- rather than taking the wider of the two. The measured value is
+        -- built from the column MINIMUMS (245 + 150 + the Wowhead column),
+        -- which stand at ~537 even with nothing to put in them, so a
+        -- max() against a narrower floor could never take effect. Guarded
+        -- on glory rows too: a dungeon can carry a Glory block with no
+        -- achievement rows under it, and that block needs the full width.
+        local hasAnyRow = hasAchievements
+        if not hasAnyRow then
+            for _, row in ipairs(rows) do
+                if row.kind ~= "spacer" and row.kind ~= "header" then
+                    hasAnyRow = true
+                    break
+                end
+            end
+        end
+        if hasAnyRow then
+            windowW = math.max(windowW, ACH_WINDOW_WIDTH)
+        else
+            windowW = UI.ACH_EMPTY_WINDOW_WIDTH
+        end
 
         -- Width ratchets for the session: switching raids never narrows
         -- the frame, it only widens when a raid's measured need exceeds
@@ -12117,19 +15509,31 @@ GetOrCreateAchievementsWindow = function()
         -- locale, so monotone width is the equivalent. Content spans
         -- the full ratcheted width (the Wowhead column keeps hugging
         -- the right edge) since rows anchor to the row parent's edges.
-        achFrame.sessionMaxWidth = math.max(
-            achFrame.sessionMaxWidth or 0, windowW)
-        windowW = achFrame.sessionMaxWidth
+        -- The empty state stands outside the ratchet: it has no columns to
+        -- hold stable, and keeping a table's width around one sentence is
+        -- waste the ratchet was never meant to cause. It neither reads nor
+        -- feeds sessionMaxWidth, so returning to a real table restores the
+        -- widest width the session has needed.
+        if hasAnyRow then
+            achFrame.sessionMaxWidth = math.max(
+                achFrame.sessionMaxWidth or 0, windowW)
+            windowW = achFrame.sessionMaxWidth
+        end
         achFrame:SetWidth(windowW + ACH_SCROLLBAR_GUTTER)
 
         -- The scroll viewport starts below the dropdown stack (title +
         -- two dropdowns) and rows render into its child from y = 0; the
         -- child is exactly windowW wide so every row anchor below sees
         -- the same geometry the pre-scroll layout used.
-        local DROPDOWNS_BOTTOM = 32 + 2 * 32 + 4
+        local DROPDOWNS_BOTTOM = 32 + 3 * 32 + 4
         local rowParent = achFrame.rowContent
         rowParent:SetWidth(windowW)
         local y = 0
+
+        -- Where a search result landed, filled in by whichever row matches
+        -- as the rows lay out. Read once the scroll geometry is known.
+        local searchTarget = achFrame._searchTarget
+        local searchHitY, searchHitH = nil, nil
 
         -- Glory headers (name + reward line each), one block per glory
         -- in the raid's list. Hidden if absent.
@@ -12139,6 +15543,11 @@ GetOrCreateAchievementsWindow = function()
             local gloryRow = rows[rowsStart]
             gloryIndex = gloryIndex + 1
             local glorySlot = achFrame:GetGlorySlot(gloryIndex)
+
+            -- A glory or reward hit lands on the glory's own name line.
+            if searchTarget and searchTarget.gloryID == gloryRow.id then
+                searchHitY, searchHitH = y, fontSize + 6
+            end
 
             -- Status fragment: "[ ✓ ]" if completed, "n/N" otherwise.
             -- Gold for the progress count to match the encounter section.
@@ -12172,7 +15581,7 @@ GetOrCreateAchievementsWindow = function()
                 rewardText = C_Spell.GetSpellLink(gloryRow.rewardSpellID)
             end
             if not rewardText and gloryRow.rewardItemID then
-                local _, itemLink = GetItemInfo(gloryRow.rewardItemID)
+                local _, itemLink = C_Item.GetItemInfo(gloryRow.rewardItemID)
                 rewardText = itemLink
             end
             if not rewardText and gloryRow.rewardName then
@@ -12266,20 +15675,39 @@ GetOrCreateAchievementsWindow = function()
             elseif row.kind == "achRow" then
                 local slot = GetAchRowSlot(rowParent, i)
 
-                -- Current-boss highlight + left accent bar. The textures
-                -- span from this row's top (y) down to the bottom of its
+                -- An achievement hit lands on its own row; a boss hit lands
+                -- on the first row that boss carries, which is where the
+                -- reader looks for it.
+                if searchTarget and not searchHitY then
+                    if searchTarget.achievementID == row.achievementID
+                       or (not searchTarget.achievementID
+                           and searchTarget.bossName
+                           and searchTarget.bossName == row.bossName) then
+                        searchHitY, searchHitH = y, lineHeight
+                    end
+                end
+
+                -- Current-boss band + left accent bar. The textures span
+                -- from this row's top (y) down to the bottom of its
                 -- vertical band (y - lineHeight). Insets match the divider
-                -- inset so the highlight visually frames within the table
-                -- bounds rather than running edge-to-edge. The accent bar
-                -- is anchored to the highlight's LEFT so they move
-                -- together. Both BACKGROUND layer -- text and dividers
-                -- render on top, so the highlight reads as a tinted band
-                -- behind the row's content.
+                -- inset so the band visually frames within the table
+                -- bounds rather than running edge-to-edge. The band only
+                -- shows during the flash window and fades out; the accent
+                -- bar stays as the persistent marker.
                 if currentBossName and row.bossName == currentBossName then
-                    slot.highlight:ClearAllPoints()
-                    slot.highlight:SetPoint("TOPLEFT",     rowParent, "TOPLEFT",  14, y + 1)
-                    slot.highlight:SetPoint("BOTTOMRIGHT", rowParent, "TOPRIGHT", -14, y - lineHeight + ACH_ROW_BOTTOM_INSET)
-                    slot.highlight:Show()
+                    if flashActive then
+                        slot.highlight:ClearAllPoints()
+                        slot.highlight:SetPoint("TOPLEFT",     rowParent, "TOPLEFT",  14, y + 1)
+                        slot.highlight:SetPoint("BOTTOMRIGHT", rowParent, "TOPRIGHT", -14, y - lineHeight + ACH_ROW_BOTTOM_INSET)
+                        slot.highlight:Show()
+                        -- A mid-fade re-render keeps a running animation;
+                        -- restart only on a new flash, or when this slot's
+                        -- animation is not the one carrying it.
+                        if flashRestart or not slot.highlightFade:IsPlaying() then
+                            slot.highlightFade:Stop()
+                            slot.highlightFade:Play()
+                        end
+                    end
 
                     slot.accent:ClearAllPoints()
                     slot.accent:SetPoint("TOPLEFT",    rowParent, "TOPLEFT", 14, y + 1)
@@ -12369,20 +15797,56 @@ GetOrCreateAchievementsWindow = function()
             end
         end
 
-        -- Legend: a fixed footer on the window itself, pinned to the
-        -- frame bottom so it never scrolls out of view with a long
-        -- table. Two FontStrings on the same baseline.
+        -- Meta key: its own row directly under the last achievement, at the
+        -- achievement column's X so its diamond lines up with the diamonds
+        -- in the rows above. It belongs to the content, not the footer, so
+        -- it scrolls with the table. With no achievements there is nothing
+        -- for it to key, so it stays hidden rather than sitting alone.
+        if hasAchievements then
+            SetBodyFont(achFrame.metaKey, fontSize - 1, "")
+            achFrame.metaKey:ClearAllPoints()
+            achFrame.metaKey:SetPoint("TOPLEFT", rowParent, "TOPLEFT", colNameX, y - 4)
+            achFrame.metaKey:Show()
+            y = y - lineHeight
+        else
+            achFrame.metaKey:Hide()
+        end
+
+        -- Empty state: centered in the row viewport, where the table would
+        -- have been.
+        if hasAchievements then
+            achFrame.emptyNote:Hide()
+        else
+            -- Anchored to the FRAME, not the scroll child. The child is
+            -- windowW and the frame is windowW + the scrollbar gutter, so
+            -- centering on the child sits half a gutter left of true center.
+            -- Inset well past the table margins so the sentence wraps into
+            -- a readable block. Run to the frame edges it reads as one long
+            -- line and makes the window look sized around it, when the
+            -- width actually comes from the row columns.
+            SetBodyFont(achFrame.emptyNote, fontSize, "")
+            local noteInset = math.max(20,
+                math.floor(((achFrame:GetWidth() or 510) - 330) / 2))
+            achFrame.emptyNote:ClearAllPoints()
+            achFrame.emptyNote:SetPoint("TOPLEFT", achFrame, "TOPLEFT",
+                noteInset, -DROPDOWNS_BOTTOM + y - 12)
+            achFrame.emptyNote:SetPoint("TOPRIGHT", achFrame, "TOPRIGHT",
+                -noteInset, -DROPDOWNS_BOTTOM + y - 12)
+            achFrame.emptyNote:Show()
+            y = y - (achFrame.emptyNote:GetStringHeight() or fontSize) - 24
+        end
+
+        -- Footer: pinned to the frame bottom so it never scrolls out of
+        -- view with a long table. Soloable key left, report line right.
         SetBodyFont(achFrame.legendLeft, fontSize - 1, "")
         achFrame.legendLeft:ClearAllPoints()
         achFrame.legendLeft:SetPoint("BOTTOMLEFT", achFrame, "BOTTOMLEFT", 14, 12)
 
-        SetBodyFont(achFrame.legendRight, fontSize - 1, "")
-        achFrame.legendRight:ClearAllPoints()
-        achFrame.legendRight:SetPoint("BOTTOMRIGHT", achFrame, "BOTTOMRIGHT", -14, 12)
+        UI.LayoutReportLine(achFrame.reportLine, fontSize - 1, achFrame, -14, 12)
 
         local legendH = math.max(
-            achFrame.legendLeft:GetStringHeight()  or fontSize,
-            achFrame.legendRight:GetStringHeight() or fontSize
+            achFrame.legendLeft:GetStringHeight() or fontSize,
+            achFrame.reportLine.suffix:GetStringHeight() or fontSize
         )
 
         -- Height: chrome (title + dropdowns) + rows + legend footer,
@@ -12399,12 +15863,42 @@ GetOrCreateAchievementsWindow = function()
         local viewportH = clamped - DROPDOWNS_BOTTOM - legendBand
         rowParent:SetHeight(contentH)
         local rowScroll = achFrame.rowScroll
+        -- Set BEFORE the resize. SetSize is what fires OnScrollRangeChanged,
+        -- and that handler reads rowsScrollable -- so assigning it afterwards
+        -- let the handler see the PREVIOUS render's value and leave the bar
+        -- up on a short table that followed a long one.
+        achFrame.rowsScrollable = contentH > viewportH + 1
         rowScroll:ClearAllPoints()
         rowScroll:SetPoint("TOPLEFT", achFrame, "TOPLEFT", 0, -DROPDOWNS_BOTTOM)
         rowScroll:SetSize(windowW, viewportH)
-        achFrame.rowsScrollable = contentH > viewportH + 1
-        if not achFrame.rowsScrollable and rowScroll.SetVerticalScroll then
-            rowScroll:SetVerticalScroll(0)
+        if not achFrame.rowsScrollable then
+            if rowScroll.SetVerticalScroll then rowScroll:SetVerticalScroll(0) end
+            local bar = ResolveAchScrollBar()
+            if bar then bar:Hide() end
+        end
+
+        -- Search landing. Cleared unconditionally, so a target that matched
+        -- no row (an instance whose rows changed under it) does not sit
+        -- waiting to flash on some later, unrelated render.
+        achFrame._searchTarget = nil
+        if searchHitY then
+            -- y runs negative down the content, so -y is the row's distance
+            -- from the top. Center it in the viewport where there is room to,
+            -- and clamp so short tables do not scroll past their end.
+            if achFrame.rowsScrollable and rowScroll.SetVerticalScroll then
+                local target = -searchHitY - (viewportH - searchHitH) / 2
+                local maxScroll = math.max(0, contentH - viewportH)
+                rowScroll:SetVerticalScroll(
+                    math.max(0, math.min(maxScroll, target)))
+            end
+            achFrame.searchFlash:ClearAllPoints()
+            achFrame.searchFlash:SetPoint("TOPLEFT", rowParent, "TOPLEFT",
+                14, searchHitY + 1)
+            achFrame.searchFlash:SetPoint("BOTTOMRIGHT", rowParent, "TOPRIGHT",
+                -14, searchHitY - searchHitH + ACH_ROW_BOTTOM_INSET)
+            achFrame.searchFlash:Show()
+            achFrame.searchFlashFade:Stop()
+            achFrame.searchFlashFade:Play()
         end
     end
 
@@ -12420,7 +15914,13 @@ GetOrCreateAchievementsWindow = function()
     achFrame:RegisterEvent("RECEIVED_ACHIEVEMENT_LIST")
 
     local refreshPending = false
-    achFrame:SetScript("OnEvent", function(self)
+    achFrame:SetScript("OnEvent", function(self, event)
+        -- The index caches achievement and glory names, which read empty
+        -- before the client's list lands. Drop it so the next search
+        -- rebuilds against real names.
+        if event == "RECEIVED_ACHIEVEMENT_LIST" then
+            UI._achSearchIndex = nil
+        end
         if not self:IsShown() then return end
         if refreshPending then return end
         refreshPending = true
@@ -12464,6 +15964,12 @@ function UI.OpenAchievementsWindow()
     -- rendering at default and then snapping to settings.
     local scale = RR:GetSetting("windowScale", 1.0)
     window:SetScale(scale)
+    -- Re-arm the current-boss band flash: every open gets the flash even
+    -- when the boss has not changed since the last one. The fingerprint
+    -- cache must go with it, or the unchanged-rows short-circuit skips
+    -- the render that restarts the animation.
+    window._bossFlashKey = nil
+    UI.InvalidateAchievementsCache()
     window:RefreshAll()
     window:Show()
 end

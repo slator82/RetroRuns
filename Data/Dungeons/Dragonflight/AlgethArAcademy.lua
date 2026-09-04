@@ -12,7 +12,15 @@ RetroRuns_DungeonData[1201] = {
     name              = "Algeth'ar Academy",
     expansion         = "Dragonflight",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "10.0.2",
+    timewalking       = true,
+
+    entrance = {
+        mapID = 2025,
+        x     = 0.5827,
+        y     = 0.4226,
+    },
 
     gloryMeta = {
         id   = 16295,
@@ -28,11 +36,11 @@ RetroRuns_DungeonData[1201] = {
             name               = "Vexamus",
             journalEncounterID = 2509,
             achievements       = {
-                { id = 16434, name = "See Me After Class", meta = true },
+                { id = 16434, name = "See Me After Class", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 193709, slot = "Off-hand", name = "Vexamus' Expulsion Rod", sources = { [14]=180824, [15]=180824, [16]=180824 } },
-                { id = 258529, slot = "Two-Hand", name = "Arcaneclaw Spear", sources = { [14]=301475, [15]=301475, [16]=301475 } },
+                { id = 258529, slot = "Two-Hand", name = "Arcaneclaw Spear", sources = { [15]=301475, [16]=301475 } },
                 { id = 193711, slot = "Weapon", name = "Spellbane Cutlass", sources = { [14]=180826, [15]=180826, [16]=180826 } },
                 { id = 193710, slot = "Weapon", name = "Spellboon Saber", sources = { [14]=180825, [15]=180825, [16]=180825 } },
             },
@@ -42,7 +50,7 @@ RetroRuns_DungeonData[1201] = {
             name               = "Overgrown Ancient",
             journalEncounterID = 2512,
             achievements       = {
-                { id = 16329, name = "Duck, Duck, Spruce!", meta = true },
+                { id = 16329, name = "Duck, Duck, Spruce!", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 193712, slot = "Back", name = "Potion-Stained Cloak", sources = { [14]=180828, [15]=180828, [16]=180828 } },
@@ -58,12 +66,11 @@ RetroRuns_DungeonData[1201] = {
             name               = "Crawth",
             journalEncounterID = 2495,
             achievements       = {
-                { id = 16441, name = "Squad Goals", meta = true },
             },
             loot = {
                 { id = 193720, slot = "Chest", name = "Bronze Challenger's Robe", sources = { [14]=180831, [15]=180831, [16]=180831 } },
                 { id = 193721, slot = "Hands", name = "Ruby Contestant's Gloves", sources = { [14]=180832, [15]=180832, [16]=180832 } },
-                { id = 258531, slot = "Off-hand", name = "Crawth's Scaleguard", sources = { [14]=301476, [15]=301476, [16]=301476 } },
+                { id = 258531, slot = "Off-hand", name = "Crawth's Scaleguard", sources = { [15]=301476, [16]=301476 } },
                 { id = 193723, slot = "Two-Hand", name = "Obsidian Goaltending Spire", sources = { [14]=180834, [15]=180834, [16]=180834 } },
                 { id = 193722, slot = "Waist", name = "Azure Belt of Competition", sources = { [14]=180833, [15]=180833, [16]=180833 } },
             },
@@ -73,9 +80,6 @@ RetroRuns_DungeonData[1201] = {
             name               = "Echo of Doragosa",
             journalEncounterID = 2514,
             achievements       = {
-                { id = 16269, name = "Algeth'ar Academy" },
-                { id = 16270, name = "Heroic: Algeth'ar Academy" },
-                { id = 16271, name = "Mythic: Algeth'ar Academy" },
             },
             loot = {
                 { id = 193705, slot = "Chest", name = "Breastplate of Proven Knowledge", sources = { [14]=180821, [15]=180821, [16]=180821 } },

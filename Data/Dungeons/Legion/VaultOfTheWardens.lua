@@ -12,7 +12,15 @@ RetroRuns_DungeonData[707] = {
     name              = "Vault of the Wardens",
     expansion         = "Legion",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "7.0.3",
+    timewalking       = true,
+
+    entrance = {
+        mapID = 630,
+        x     = 0.4829,
+        y     = 0.8010,
+    },
 
     bosses = {
         {
@@ -50,6 +58,8 @@ RetroRuns_DungeonData[707] = {
             index              = 3,
             name               = "Ash'golm",
             journalEncounterID = 1468,
+            -- Criterion prose reads "Ash'Golm defeated" and spells the name differently.
+            scenarioCriteriaID = 29370,
             achievements       = {
             },
             loot = {
@@ -80,14 +90,9 @@ RetroRuns_DungeonData[707] = {
             index              = 5,
             name               = "Cordana Felsong",
             journalEncounterID = 1470,
+            -- Criterion prose reads "Cordana defeated" and does not carry the journal name.
+            scenarioCriteriaID = 34462,
             achievements       = {
-                { id = 10801, name = "Vault of the Wardens" },
-                { id = 10802, name = "Heroic: Vault of the Wardens" },
-                { id = 10803, name = "Mythic: Vault of the Wardens" },
-                { id = 60822, name = "Vault of the Wardens" },
-                { id = 60823, name = "Heroic: Vault of the Wardens" },
-                { id = 60824, name = "Mythic: Vault of the Wardens" },
-                { id = 10679, name = "I Ain't Even Cold" },
             },
             loot = {
                 { id = 137531, slot = "Back", name = "Cloak of Enthralling Darkness", sources = { [14]=79108, [15]=80820, [16]=79108 } },

@@ -12,7 +12,14 @@ RetroRuns_DungeonData[1198] = {
     name              = "The Nokhud Offensive",
     expansion         = "Dragonflight",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "10.0.2",
+
+    entrance = {
+        mapID = 2023,
+        x     = 0.6085,
+        y     = 0.3896,
+    },
 
     gloryMeta = {
         id   = 16295,
@@ -42,7 +49,7 @@ RetroRuns_DungeonData[1198] = {
             name               = "The Raging Tempest",
             journalEncounterID = 2497,
             achievements       = {
-                { id = 16447, name = "What Are The Chances...", meta = true },
+                { id = 16447, name = "What Are The Chances...", meta = true, soloable = "no" },
             },
             loot = {
                 { id = 193699, slot = "Two-Hand", name = "Staff of Violent Storms", sources = { [14]=180817, [15]=180817, [16]=180817 } },
@@ -55,7 +62,7 @@ RetroRuns_DungeonData[1198] = {
             name               = "Teera and Maruuk",
             journalEncounterID = 2478,
             achievements       = {
-                { id = 16456, name = "Weapons of the Maruukai", meta = true },
+                { id = 16456, name = "Weapons of the Maruukai", meta = true, soloable = "kinda" },
             },
             loot = {
                 { id = 193680, slot = "Chest", name = "Tunic of the Eternal Hunt", sources = { [14]=180802, [15]=180802, [16]=180802 } },
@@ -67,11 +74,8 @@ RetroRuns_DungeonData[1198] = {
             name               = "Balakar Khan",
             journalEncounterID = 2477,
             achievements       = {
-                { id = 16275, name = "The Nokhud Offensive" },
-                { id = 16276, name = "Heroic: The Nokhud Offensive" },
-                { id = 16277, name = "Mythic: The Nokhud Offensive" },
-                { id = 16602, name = "Nokhud Deed Goes Unnoticed", meta = true },
-                { id = 16620, name = "Ohuna Incubation", meta = true },
+                { id = 16602, name = "Nokhud Deed Goes Unnoticed", meta = true, soloable = "kinda" },
+                { id = 16620, name = "Ohuna Incubation", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 193683, slot = "Chest", name = "Blessed Ohn'ir Robes", sources = { [14]=180804, [15]=180804, [16]=180804 } },

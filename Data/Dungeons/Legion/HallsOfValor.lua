@@ -12,7 +12,14 @@ RetroRuns_DungeonData[721] = {
     name              = "Halls of Valor",
     expansion         = "Legion",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "7.0.3",
+
+    entrance = {
+        mapID = 634,
+        x     = 0.7275,
+        y     = 0.7036,
+    },
 
     gloryMeta = {
         id   = 11163,
@@ -96,13 +103,7 @@ RetroRuns_DungeonData[721] = {
             name               = "Odyn",
             journalEncounterID = 1489,
             achievements       = {
-                { id = 10786, name = "Halls of Valor" },
-                { id = 10788, name = "Heroic: Halls of Valor" },
-                { id = 10789, name = "Mythic: Halls of Valor" },
-                { id = 60831, name = "Halls of Valor" },
-                { id = 60832, name = "Heroic: Halls of Valor" },
-                { id = 60833, name = "Mythic: Halls of Valor" },
-                { id = 10542, name = "I Got What You Mead", meta = true },
+                { id = 10542, name = "I Got What You Mead", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 133765, slot = "Back", name = "Cape of Valarjar Courage", sources = { [14]=76910, [15]=80805, [16]=76910 } },

@@ -12,7 +12,14 @@ RetroRuns_DungeonData[727] = {
     name              = "Maw of Souls",
     expansion         = "Legion",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "7.0.3",
+
+    entrance = {
+        mapID = 634,
+        x     = 0.5251,
+        y     = 0.4500,
+    },
 
     gloryMeta = {
         id   = 11163,
@@ -27,8 +34,10 @@ RetroRuns_DungeonData[727] = {
             index              = 1,
             name               = "Ymiron, the Fallen King",
             journalEncounterID = 1502,
+            -- Criterion prose reads "Ymiron defeated" and does not carry the journal name.
+            scenarioCriteriaID = 29340,
             achievements       = {
-                { id = 10413, name = "Instant Karma", meta = true },
+                { id = 10413, name = "Instant Karma", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 134179, slot = "Chest", name = "Skoldiir Breastplate", sources = { [14]=77483, [15]=77483, [16]=77483 } },
@@ -64,14 +73,8 @@ RetroRuns_DungeonData[727] = {
             name               = "Helya",
             journalEncounterID = 1663,
             achievements       = {
-                { id = 10412, name = "Poor Unfortunate Souls", meta = true },
-                { id = 10807, name = "Maw of Souls" },
-                { id = 10808, name = "Heroic: Maw of Souls" },
-                { id = 10809, name = "Mythic: Maw of Souls" },
-                { id = 60828, name = "Maw of Souls" },
-                { id = 60829, name = "Heroic: Maw of Souls" },
-                { id = 60830, name = "Mythic: Maw of Souls" },
-                { id = 10411, name = "Helheim Hath No Fury", meta = true },
+                { id = 10412, name = "Poor Unfortunate Souls", meta = true, soloable = "yes" },
+                { id = 10411, name = "Helheim Hath No Fury", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 134214, slot = "Chest", name = "Tideskorn Vest", sources = { [14]=77508, [15]=77508, [16]=77508 } },

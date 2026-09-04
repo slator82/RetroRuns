@@ -12,7 +12,15 @@ RetroRuns_DungeonData[1203] = {
     name              = "The Azure Vault",
     expansion         = "Dragonflight",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "10.0.2",
+    timewalking       = true,
+
+    entrance = {
+        mapID = 2024,
+        x     = 0.3876,
+        y     = 0.6507,
+    },
 
     gloryMeta = {
         id   = 16295,
@@ -54,7 +62,7 @@ RetroRuns_DungeonData[1203] = {
             name               = "Telash Greywing",
             journalEncounterID = 2483,
             achievements       = {
-                { id = 16445, name = "Icy What You Did There", meta = true },
+                { id = 16445, name = "Icy What You Did There", meta = true, soloable = "kinda" },
             },
             loot = {
                 { id = 193648, slot = "Hands", name = "Azureblade's Work Gloves", sources = { [14]=180780, [15]=180780, [16]=180780 } },
@@ -68,11 +76,8 @@ RetroRuns_DungeonData[1203] = {
             name               = "Umbrelskul",
             journalEncounterID = 2508,
             achievements       = {
-                { id = 16272, name = "The Azure Vault" },
-                { id = 16273, name = "Heroic: The Azure Vault" },
-                { id = 16274, name = "Mythic: The Azure Vault" },
-                { id = 16330, name = "You Must Be Made of Hide", meta = true },
-                { id = 16331, name = "The Cracked Crystal", meta = true },
+                { id = 16330, name = "You Must Be Made of Hide", meta = true, soloable = "yes" },
+                { id = 16331, name = "The Cracked Crystal", meta = true, soloable = "yes" },
             },
             loot = {
                 { id = 193644, slot = "Chest", name = "Cuirass of Irreparable Madness", sources = { [14]=180770, [15]=180770, [16]=180770 } },

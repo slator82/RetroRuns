@@ -12,7 +12,15 @@ RetroRuns_DungeonData[767] = {
     name              = "Neltharion's Lair",
     expansion         = "Legion",
     difficultyModel   = "dungeonTiered",
+    availableDifficulties = { 14, 15, 16 },
     patch             = "7.0.3",
+    timewalking       = true,
+
+    entrance = {
+        mapID = 650,
+        x     = 0.4956,
+        y     = 0.6888,
+    },
 
     bosses = {
         {
@@ -69,13 +77,9 @@ RetroRuns_DungeonData[767] = {
             index              = 4,
             name               = "Dargrul the Underking",
             journalEncounterID = 1687,
+            -- Criterion prose reads "Dargrul" and does not carry the journal name.
+            scenarioCriteriaID = 31405,
             achievements       = {
-                { id = 10795, name = "Neltharion's Lair" },
-                { id = 10796, name = "Heroic: Neltharion's Lair" },
-                { id = 10797, name = "Mythic: Neltharion's Lair" },
-                { id = 60825, name = "Neltharion's Lair" },
-                { id = 60826, name = "Heroic: Neltharion's Lair" },
-                { id = 60827, name = "Mythic: Neltharion's Lair" },
             },
             loot = {
                 { id = 134135, slot = "Chest", name = "Rockbound Chestguard", sources = { [14]=77449, [15]=77449, [16]=77449 } },
