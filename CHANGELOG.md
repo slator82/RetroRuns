@@ -6,193 +6,86 @@ All notable changes to RetroRuns are documented here.
 
 ### Added
 
-- **Dungeons!** Initially shipping with 20 dungeons which includes 
-  every Classic dungeon plus a couple from MoP. More dungeons will continue
-  to be added! While the routes/guides are being developed for more dungeons,
-  feel free to utilize the transmog browser for ALL dungeons, as well as
-  pink plane navigation to every entrance.
-  
-- **Search, everywhere.** The transmog browser, the main panel and the
-  achievements window all have a new magnifying glass. Search by expansion,
-  instance, boss, loot, POI, etc. Whatever you find, one click takes you
-  right to it.
-  
-- **Progress persists in dungeons with no lockout.** Normal dungeons keep
-  no lockout, so the game gives an addon nothing to know whether the previous
-  run is still there or if it reset. RetroRuns works it out anyway: log in, 
-  reload or walk back in and an active run comes back with every kill in place, 
-  while a reset instance starts you at step one on the spot.
-
-- **Map markers show more.** Rare spawns and certain treasures now show their
-  locations on the map along with a mouseover hint to give a quick status on
-  tracked appearances.
-
-- **Raid maps mark the NPCs worth knowing about.** Blackrock Foundry's
-  skip-quest NPC and vendor, Icecrown Citadel's tier vendors, Blackwing
-  Lair's alchemy workbenches and the like, each with a hover saying what it
-  is for.
-
-- **RetroRuns has a button on the world map.** It sits in the icon column at
-  the top-right corner alongside other addons' map buttons. Its menu
-  has several map options to toggle, such as hiding POIs you've fully collected
-  or disabling RetroRuns POIs altogether.
-
-- **Rare, trash and object drops are in the transmog browser.** Rares get a
-  gold "Rare:" tag, trash drops get their own section, and Dungeon Set
-  pieces show up on the bosses that drop them. Items that have been removed
-  from the game or have become unobtainable are excluded.
-
-- **Timewalking drops get their own "TW" pill.** Looks that only drop during
-  Timewalking used to be hidden. Now they show with a TW pill.
-
-- **The list knows when Timewalking is running.** An hourglass marks the live
-  Timewalking expansion and every instance that offers a run. The hourglass
-  color indicates how much time remains on the event.
-
-- **Dungeons in the current Mythic+ season are marked.** A "M+" tag beside the
-  name, and it follows the rotation on its own with no update needed. This
-  serves as a heads up to avoid Mythic runs that are on seasonal rotation.
-
-- **The idle footer counts your instances.** "Instance Limit: 3/10 (42m)"
-  shows how many you've entered against the hourly cap and when the oldest
-  slot frees. Only shows when outside of an instance.
-
-- **The achievements window covers dungeons.** A Raids / Dungeons switch sits
-  above the instance list, an instance with nothing to track says so, and a
-  Report button in the footer allows users to flag a solo grade that has gone 
-  stale.
-
-- **The transmog browser can open on All classes.** A "Default Transmog
-  Filter" setting under General picks whether the browser opens on your
-  class or on every class. The dropdown inside the browser still narrows it
-  per visit.
-
-- **Faction-only bosses are marked.** Uldaman's Lost Dwarves are Horde only,
-  so on Alliance the row shows a lock and the boss count skips them.
+- **Dungeons!** Initially shipping with 20 dungeons which includes every Classic dungeon plus a couple from MoP. More dungeons will continue to be added! While the routes/guides are being developed for more dungeons, feel free to utilize the transmog browser for ALL dungeons, as well as pink plane navigation to every entrance.
+- **Search, everywhere.** The transmog browser, the main panel and the achievements window all have a new magnifying glass. Search by expansion, instance, boss, loot, POI, etc. Whatever you find, one click takes you right to it.
+- **Progress persists in dungeons with no lockout.** Normal dungeons keep no lockout, so the game gives an addon nothing to know whether the previous run is still there or if it reset. RetroRuns works it out anyway: log in, reload or walk back in and an active run comes back with every kill in place, while a reset instance starts you at step one on the spot.
+- **Map markers show more.** Rare spawns and certain treasures now show their locations on the map along with a mouseover hint to give a quick status on tracked appearances.
+- **Raid maps mark the NPCs worth knowing about.** Blackrock Foundry's skip-quest NPC and vendor, Icecrown Citadel's tier vendors, Blackwing Lair's alchemy workbenches and the like, each with a hover saying what it is for.
+- **RetroRuns has a button on the world map.** It sits in the icon column at the top-right corner alongside other addons' map buttons. Its menu has several map options to toggle, such as hiding POIs you've fully collected or disabling RetroRuns POIs altogether.
+- **Rare, trash and object drops are in the transmog browser.** Rares get a gold "Rare:" tag, trash drops get their own section, and Dungeon Set pieces show up on the bosses that drop them. Items that have been removed from the game or have become unobtainable are excluded.
+- **Timewalking drops get their own "TW" pill.** Looks that only drop during Timewalking used to be hidden. Now they show with a TW pill.
+- **The list knows when Timewalking is running.** An hourglass marks the live Timewalking expansion and every instance that offers a run. The hourglass color indicates how much time remains on the event.
+- **Dungeons in the current Mythic+ season are marked.** A "M+" tag beside the name, and it follows the rotation on its own with no update needed. This serves as a heads up to avoid Mythic runs that are on seasonal rotation.
+- **The idle footer counts your instances.** "Instance Limit: 3/10 (42m)" shows how many you've entered against the hourly cap and when the oldest slot frees. Only shows when outside of an instance.
+- **The achievements window covers dungeons.** A Raids / Dungeons switch sits above the instance list, an instance with nothing to track says so, and a Report button in the footer allows users to flag a solo grade that has gone stale.
+- **The transmog browser can open on All classes.** A "Default Transmog Filter" setting under General picks whether the browser opens on your class or on every class. The dropdown inside the browser still narrows it per visit.
+- **Faction-only bosses are marked.** Uldaman's Lost Dwarves are Horde only, so on Alliance the row shows a lock and the boss count skips them.
 
 ### Changed
 
-- **Tier upgrade chains read one way everywhere.** Firelands uses the same
-  two-dot chain as every other raid, and the Icecrown Citadel legend explains
-  the dots. Dragon Soul no longer lists every Raid Finder token under every
-  boss.
-
-- **The nav plane sits beside the raid's name**, instead of beside the 
-  difficulty pills.
-
-- **Loot lists are tidier.** Normal and Heroic drops collapse to one row,
-  trash groups by source, shared notes appear once, and token lines lead the
-  list.
-
-- **The panel header is tidier.** Centered wordmark, a magenta underline
-  that survives small UI scales, and "Run complete!" on the minimized bar.
-  Text that previously said "raid" now says "instance".
-
-- **The menu dropdowns are rebuilt.** The Transmog, Achievements and Settings
-  dropdowns use the game's current menu system, with a slimmer bar, a
-  magenta arrow and no hover popups.
-
-- **Every window closes the same way.** The Achievements, Transmog and
-  Skips windows use the same styled close box as the main panel.
-
+- **Tier upgrade chains read one way everywhere.** Firelands uses the same two-dot chain as every other raid, and the Icecrown Citadel legend explains the dots. Dragon Soul no longer lists every Raid Finder token under every boss.
+- **The nav plane sits beside the raid's name**, instead of beside the difficulty pills.
+- **Loot lists are tidier.** Normal and Heroic drops collapse to one row, trash groups by source, shared notes appear once, and token lines lead the list.
+- **The panel header is tidier.** Centered wordmark, a magenta underline that survives small UI scales, and "Run complete!" on the minimized bar. Text that previously said "raid" now says "instance".
+- **The menu dropdowns are rebuilt.** The Transmog, Achievements and Settings dropdowns use the game's current menu system, with a slimmer bar, a magenta arrow and no hover popups.
+- **Every window closes the same way.** The Achievements, Transmog and Skips windows use the same styled close box as the main panel.
 - **A boss with nothing to collect says so**, in one line.
 
 ### Fixed
 
-- **Looks that can no longer be collected are gone from the browser.** Dungeon
-  Set 1 pieces with no boss drops, the Tier 0.5 summons, and season-only rows in modern
-  dungeons. Anything still collectable elsewhere is still listed there.
-
-- **Looks that were missing are back.** Several pieces the Encounter Journal
-  never listed are back, including End Time's Bindings of the End Times and 
-  Roogug's Swinesteel Girdle.
-
-- **The panel stays where you put it.** No more creeping up the screen after
-  quitting minimized, and no more collapsing on reload.
-
-- **Boss kills register in every dungeon.** When the game doesn't report a
-  kill, the addon reads the instance's own objectives and picks it up within
-  seconds.
-
+- **Looks that can no longer be collected are gone from the browser.** Dungeon Set 1 pieces with no boss drops, the Tier 0.5 summons, and season-only rows in modern dungeons. Anything still collectable elsewhere is still listed there.
+- **Looks that were missing are back.** Several pieces the Encounter Journal never listed are back, including End Time's Bindings of the End Times and Roogug's Swinesteel Girdle.
+- **The panel stays where you put it.** No more creeping up the screen after quitting minimized, and no more collapsing on reload.
+- **Boss kills register in every dungeon.** When the game doesn't report a kill, the addon reads the instance's own objectives and picks it up within seconds.
 - **Siege of Orgrimmar and newer raids have their lockout tooltip back.**
-
-- **Browsing another instance no longer highlights "current difficulty".**
-  The white "needed-now" color only appears for the instance you are standing
-  in.
-
-- **Bosses you cannot reach no longer hold the count open.** Sinestra outside
-  Heroic and Ra-den in Throne of Thunder now carry a lock.
-
-- **The transmog totals count each appearance once**, even when it drops
-  from more than one place.
-
-- **Smaller fixes.** The Skips window updates on quest turn-in, a finished
-  skip run in a dungeon reads right, the map button closes the map on a second 
-  click, loot toasts say "Browse locked in combat" instead of erroring, The
-  MOTHERLODE!! travel plane knows both faction entrances, and zoning into a
-  dungeon paints the panel right away.
+- **Browsing another instance no longer highlights "current difficulty".** The white "needed-now" color only appears for the instance you are standing in.
+- **Bosses you cannot reach no longer hold the count open.** Sinestra outside Heroic and Ra-den in Throne of Thunder now carry a lock.
+- **The transmog totals count each appearance once**, even when it drops from more than one place.
+- **Smaller fixes.** The Skips window updates on quest turn-in, a finished skip run in a dungeon reads right, the map button closes the map on a second click, loot toasts say "Browse locked in combat" instead of erroring, The MOTHERLODE!! travel plane knows both faction entrances, and zoning into a dungeon paints the panel right away.
 
 ## [2.5.0] - 2026-08-18
 
 ### Added
 
 - **The Classic raids are in, and that completes the roster.** Molten Core, Blackwing Lair, Ruins of Ahn'Qiraj and Temple of Ahn'Qiraj each come with full routing, loot, tier sets and trash drops. With them, every legacy raid in the game is now covered -- Classic through Dragonflight, all 51, every one of them walked and routed.
-
 - **The transmog browser now covers dungeons.** A new Type selector switches between Raids and Dungeons, and every legacy dungeon from Classic through Dragonflight is there to browse boss by boss -- 123 dungeons in all, with appearances tracked per difficulty where the game varies them. Dungeons are browsing only for now; full guided routing, like the raids have, is coming soon. Probably.
-
 - **Tokens now tell you where to take them.** Tier tokens that cannot simply be right-clicked, and the omnitokens some bosses drop in place of a fixed piece, show a hint under the boss that drops them: the NPC to visit, what the turn-in costs, and a travel button where one can be reached. Icecrown Citadel's map marker points at the quartermaster who serves your own class.
-
 - **Optional bosses can be skipped.** A boss the route can bypass is marked as optional on the panel and in the Boss Progress list, and its encounter row offers a Skip Boss button. Skipping asks for confirmation first, because routing stays down for the rest of that lockout, and then sends you on to the next boss. The run finishes with a reminder that you can still go back and kill anything you skipped.
-
 - **Tier rows tell you more.** They show which specializations a piece can be handed to, the full upgrade chain where one exists, and any appearance a piece can be traded up to. The explanation beneath a tier list now folds away when you do not want it.
 
 ### Changed
 
 - **The transmog browser reads more clearly.** Item names follow the same color key as their difficulty markers, tier is set apart from ordinary loot and always leads the list, legendaries sit in their own block, and gear only one class can wear says so.
-
 - **Each faction's tier piece and its twin share one row** in the raids where every piece has a counterpart, with your own faction first and a marker for each version, so you can tell which of the two you still need.
 
 ### Fixed
 
 - **Several raids were missing appearances entirely.** Trash and shared boss drops across Siege of Orgrimmar, Naxxramas and Throne of Thunder never appeared in the browser, so they read as uncollectable however many times you cleared the raid. All of them now show.
-
 - **Loot rows could show the wrong name color**, most often in the Wrath raids, where a row whose markers said collected still rendered its name gray.
-
 - **Assorted browser display fixes.** Loot lines up in proper columns, tier lists no longer sit double-spaced, a boss's ordinary loot no longer sorts above its tier list, rows that looked identical are told apart, and gear several classes can wear names the one you are looking at.
-
 - **Redemption hints point at the right place.** Trial of the Crusader names the pieces your Trophies actually buy, and Siege of Orgrimmar no longer sends Alliance players to the Horde vendor's spot.
-
 - **Route notes advance promptly after fights the game reports oddly**, instead of waiting until you walk somewhere.
-
 - **Smaller fixes.** Travel buttons say "Zone out first" rather than placing a waypoint that cannot be routed to, loot toasts respond to clicks during combat and open the right class's page, the Encounter Journal no longer redraws over itself, and row dividers no longer vanish at some window scales.
 ## [2.4.0] - 2026-08-11
 
 ### Added
 
 - **The Burning Crusade raids join RetroRuns.** All eight raids now have full routing and transmog tracking: Karazhan, Gruul's Lair, Magtheridon's Lair, Serpentshrine Cavern, The Eye, The Battle for Mount Hyjal, Black Temple, and Sunwell Plateau. Every raid carries step-by-step routing, boss progress, tier tokens resolved to each class's pieces, battle pets, and exit directions. Everything is translated in all nine supported languages.
-
 - **Trash drops in the transmog browser.** Appearances that come off a raid's trash rather than a boss now have their own section, shown below whichever raid is selected. The section collapses to a single "Trash Drops (collected/total)" heading you can expand when you want it. Each row is tagged with how the item binds (BoP vs. BoE), and a BoE piece sitting in your bags is flagged as such so you don't miss it. Summary collection counter displays yellow until every appearance is collected, and green at 100%.
-
 - **Global POIs.** Useful fixtures such as repair vendors, quartermasters, etc. can now show on the raid map at all times, not only while a particular boss is your next objective. Vendors in Black Temple and Karazhan added to start, but more to come with the tooling now built.
-
 - **Direct routes to a raid's final boss.** Some legacy raids allow the player to bypass the raid, and walk directly to the final boss. Examples include Kael'thas Sunstrider in The Eye and Lady Vashj in Serpentshrine Cavern. Unlike modern raid skips, these aren't tied to quest completion. Where one exists, the load window offers it alongside the full clear, and your choice is remembered for the week.
 
 ### Changed
 
 - **Collected items are dimmed in the transmog browser.** An item you have finished with now shows its name in gray rather than white, so the rows still worth your time stand out. An item counts as finished when every difficulty it drops at is collected.
-
 - **Section labels are now cyan.** The green and yellow section headings (Traveling, Achievements, Boss Encounter, Special Loot, Transmog Needed, Boss Progress, Trash Drops) now use the branded cyan instead.
-
 - **Hard-mode and opposite-faction drops fold into their own sections.** In the transmog browser, hard-mode-only drops (Ulduar) and the other faction's appearances (Trial of the Crusader) no longer run inline with the boss's loot list. Each now sits in its own collapsible section -- "Hard Mode", and "Horde Appearances" or "Alliance Appearances" depending on your character -- below the main list, collapsed until you expand it.
-
 - **The Transmog Needed summary takes up less space.** The `[click to browse]` hint now sits next to the heading instead of at the end of the counts, and the current difficulty shows as shorthand -- "25H" rather than "25 Player (Heroic)".
 
 ### Fixed
 
 - **Loot-toast clicks could leave the Appearances window drawing the wrong models.** Clicking a toast for an item your class cannot wear switches the wardrobe to a class that can; the window then kept the previous class's models under the new list until it was closed and reopened. It now redraws correctly.
-
 - **Icecrown Citadel's route could stall at The Spire on translated clients.** The step's location check only matched the English area name, so German, Spanish, French, Russian, and Simplified Chinese clients never saw it advance. It now matches each client's own name.
-
 - **The transmog window could grow upward after being moved.** Once dragged, expanding a section or switching bosses resized it from the center instead of downward from a fixed top edge.
 
 ## [2.3.1] - 2026-08-05
@@ -204,11 +97,8 @@ All notable changes to RetroRuns are documented here.
 ### Fixed
 
 - **Boss kills could vanish from Boss Progress after a reload.** Kills of certain bosses -- Blood Prince Council, Oregorger, Kromog, the Northrend Beasts, and a few dozen more -- unchecked themselves on the next login, sending the route back to a boss already dead for the week. Those kills now stay counted.
-
 - **Sample toasts on the settings pages could show boxes instead of text, or no title at all.** They now always use the game's standard typeface.
-
 - **Teleporter destinations in the Skips details read in English on translated clients.** They now show the game's own names for those places.
-
 - **Item names in the transmog browser could flash in English before switching to your language.** They now render in your client's language right away.
 
 ### Changed
@@ -220,47 +110,30 @@ All notable changes to RetroRuns are documented here.
 ### Added
 
 - **The Wrath of the Lich King raids join RetroRuns.** All nine raids now have full routing and transmog tracking: Naxxramas, The Eye of Eternity, The Obsidian Sanctum, Onyxia's Lair, Vault of Archavon, Ulduar, Trial of the Crusader, Icecrown Citadel, and The Ruby Sanctum. Every raid carries step-by-step routing, boss progress, tier sets, special drops, achievements, and exit directions at every difficulty the raid offers. Icecrown Citadel is guided end to end across all twelve bosses for both factions, with the gunship and Deathbringer Saurfang approaches routed separately for Alliance and Horde. Valithria Dreamwalker is optional, and the guide follows players who run past her, picking up at Sindragosa; turn back for her and the route follows you back, and the run reads as complete once the Lich King falls either way. Ulduar offers guidance through each hard-mode available, along with hard-mode loot tracking in the transmog browser. Trial of the Crusader and Icecrown Citadel field a different encounter depending on your faction, and the boss list, route, and notes follow the one you actually fight.
-
 - **Simplified Chinese (zhCN) localization.** The full interface, route notes, tips, and What's New now display in Simplified Chinese on Chinese clients.
-
 - **The transmog browser tracks the other faction's drops.** Faction-locked items were hidden entirely, but the game grants the opposite faction's appearance when its counterpart drops for you, so they are collectible. They appear in their own block at the bottom of each boss's list, tagged with the faction they belong to, and light up as you collect them. The needed counts still cover only what your character can loot.
 
 ### Changed
 
 - **The Volcanius marker in Vault of the Incarnates is a plain point of interest.** It was a pulsing ring of the kind that turns gray and ticks itself off once you pass it, but that kill cannot be detected, so the ring never resolved.
-
 - **Expansion names display in the client's language.** The expansion headers and dropdowns follow what the game's own journal shows, which localizes them on some clients.
-
 - **The Achievements section now appears for every boss.** Bosses with no tracked achievements show the section with "None" rather than hiding it; the row opens the Achievements window.
-
 - **The Achievements window no longer changes width when switching raids.** It keeps the widest size it has needed so far and only its bottom edge moves, matching the transmog popup's behavior.
-
 - **The Toaster settings click legend now reads "Left-Click: Collections"** (was "Left-Click: Open in Collections"), in all languages.
-
 - **The Sun King's Salvation tip in Castle Nathria was removed.**
 
 ### Fixed
 
 - **Raids that share one lockout across two difficulties now recognize the week's progress from either side.** Entering the other difficulty of a lockout you had already progressed showed a fresh run and asked you to pick a route again; the addon now resumes your route, counts the kills you already have, and shows the run as complete when the lockout is finished.
-
 - **On translated clients, the word above the SKIP button could overlap the "Select Route" prompt.** Hovering FULL or SKIP shows that button's word in your language above it, and on a longer word it ran into the prompt line. The dialog now leaves room for it.
-
 - **The skip route's target boss showed in English on translated clients.** The route picker's SKIP button names the boss the shortcut skips ahead to, and that name was printed from the addon's own English text rather than the game's. It now shows the name your client uses, on every raid with a skip route.
-
 - **On non-English clients, the route-selection popup could show rows of empty squares with no raid name.** The popup could appear before its text was filled in, rendering its prompt in a font that lacks the client language's characters; it now stays hidden until fully populated and always uses a font that covers the client's language. If a font fails to load, which can happen with replaced game fonts, the addon falls back to the game's own font instead of leaving text unreadable.
-
 - **The transmog browser could open filtered to another class.** A class chosen in the browser's dropdown, or reached by clicking a drop toast for gear your character cannot wear, was remembered permanently, so later visits kept showing that class, on that character and on every other one that shared its class. The choice now lasts only as long as the browser is open; opening it again shows the class you are playing.
-
 - **Left-clicking a loot toast for gear your class cannot wear now shows the appearance.** The appearances browser opened to an empty page because its view is filtered to classes that can equip the item; it now switches the class filter to one that can view the drop, and switches it back when you close the window.
-
 - **Clicking a loot toast could open the appearances window on an unrelated page.** Every drop now opens to its own page, including shields, bows, guns, and wands your class cannot use -- the browser switches to a class that can see them and switches back when you close it. Appearances locked to the other faction say so and point at the preview instead of opening.
-
 - **The Firelands Glory reward rendered as plain text until the item cache primed.** The reward now resolves through the mount's spell link like every other Glory, so it links immediately.
-
 - **The selected On/Off choice under "Hide Blizzard Boss Banner:" showed no underline.** The row's wide label pushed its buttons to a fractional pixel position where the hairline could vanish; positions now round to whole pixels and the underline uses the same pixel-grid handling as the dividers.
-
 - **The divider above the routing legend crowded the lines above and below it.** With several expansions listed, the supported-raids list grew into the space reserved for the legend, leaving the divider and its gem overlapping the last raid row and the legend text.
-
 - **Two boss names were spelled differently than the game spells them.** Tomb of Sargeras travel notes read "Kil'Jaeden" (the game uses "Kil'jaeden") and a Sanctum of Domination note read "the Tarragrue" mid-sentence where the boss is "The Tarragrue".
 
 ## [2.2.1] - 2026-07-21
@@ -268,19 +141,14 @@ All notable changes to RetroRuns are documented here.
 ### Added
 
 - **RetroRuns now speaks German, French, and Russian.** Full localization on deDE, frFR, and ruRU clients: the interface, every travel note and solo tip, boss and place names, achievement notes, sub-zone routing, dialog triggers, and the What's New window. Route tracking works the same as it does in English, including the steps that advance when you enter a specific part of a raid or when a boss speaks; quest, achievement, and place names carry Blizzard's official localized titles. English and Spanish clients are unchanged.
-
 - **Loot toasts respond to clicks.** Right-click a toast to dismiss it. Ctrl-click to preview the item in the dressing room, whether it is an appearance, a mount, or a pet. Left-click opens the drop where it lives in your collection: appearances in the Appearances tab, mounts in the Mount Journal, pets in the Pet Journal, toys in the Toy Box. Opening a collection window is not possible during combat, so left-click waits until the fight is over; dismissing and previewing work at any time. The three gestures are listed in the toaster settings under Toaster Preview.
-
 - **Loot toasts now hold while you hover them.** Hovering a toast brings it back to full opacity and keeps it on screen for as long as the cursor stays on it, so there is time to read what dropped. Moving away resumes the fade from where it left off.
-
 - **The minimized bar shows the way out when a run is complete.** Finishing a raid in minimized mode used to leave the bar showing only the RetroRuns wordmark. It now reads "Raid Complete!" — or the skip and Raid Finder equivalents — with an abbreviated exit tip beneath it.
 
 ### Fixed
 
 - **Toaster settings page layout holds up in every language.** The header wraps inside the frame instead of running past it, and the explainer text, click-gesture legend, and loot-summary preview no longer overlap the sample toasts.
-
 - **The notification preview's Play button no longer runs into the notes beside it.** The button sizes to its own label and moves to its own line when the pair would reach the right-hand column.
-
 - **Localization fixes for Spanish clients.** Two Emerald Nightmare travel notes and twenty-one highlighted place names now render fully in Spanish, the Merithra and Vol'jin dialog triggers fire again, and the loot summary's chat rows (the "From that kill" heading, the "New!" tag, and the Mount, Pet, and Toy labels) are translated.
 
 ## [2.2.0] - 2026-07-18
@@ -288,21 +156,15 @@ All notable changes to RetroRuns are documented here.
 ### Added
 
 - **Localization support, starting with Spanish.** The groundwork is in place for RetroRuns to run in languages other than English: player-facing text now goes through a translation layer, and raid, wing, boss, and place names follow your game client's language. Spanish is the first language built on it, covering the interface and all route content on esES and esMX clients. More languages can now be added without further engine work. English clients are unchanged.
-
 - **Minimized mode comes to life.** Collapse the main panel to enable minimized mode. The main panel is replaced with a much smaller bar that shows an abbreviated version of every step-by-step travel note, along with a quick snapshot of current boss progress. Supported on all raids, all routes; Full, Skip, and LFR.
 
 ### Fixed
 
 - **The panel now keeps one position across all characters.** The window's position has always been saved account-wide, but the game's own per-character frame memory was re-applying each character's last position over it, so every character ended up with the panel somewhere different. The saved position now wins everywhere: move it once and it stays there for the whole account.
-
 - **Boss progress now tracks correctly on non-English clients in Mists of Pandaria raids.** On a client running in a non-English language, killing a boss in Mogu'shan Vaults, Heart of Fear, Terrace of Endless Spring, Throne of Thunder, or Siege of Orgrimmar did not register the kill or advance the route: the boss progress list, travel note, and map line stayed on the first boss no matter how far you had cleared. The Encounter Journal lookup used to match kills was reading at a difficulty those raids do not offer. English clients were unaffected and remain unchanged.
-
 - **The loot summary no longer misses drops when loot arrives a moment after the loot window closes.** On higher-latency pulls the summary could appear empty; it now waits briefly for the last items.
-
 - **The transmog window no longer shows a scrollbar when a boss's loot list fits.** A scrollbar, and a clipped travel button, appeared on bosses with a weapon-token footnote even when the list fit.
-
 - **The vendor travel button in the transmog window uses the correct plane icon and no longer sits under the scrollbar.**
-
 - **The Dragon Soul routing hint before Ultraxion now appears.** The step telling you to talk to Thrall to begin the encounter could never display.
 
 ## [2.1.0] - 2026-07-06
@@ -310,37 +172,25 @@ All notable changes to RetroRuns are documented here.
 ### Added
 
 - **The Cataclysm raids join RetroRuns.** All six now have full routing and transmog tracking: Baradin Hold, Blackwing Descent, The Bastion of Twilight, Throne of the Four Winds, Firelands, and Dragon Soul. Dragon Soul includes both Raid Finder wings, The Siege of Wyrmrest Temple and Fall of Deathwing, with per-wing routing and loot.
-
 - **The transmog browser can filter by class.** A class dropdown replaces the old show-all-tier toggle: pick any class to see only the gear it can collect, or choose "All classes" to see everything. It defaults to your own class, and shows as unavailable on bosses that drop no class-restricted gear.
-
 - **Hovering a raid in the supported-raids list shows how its lockout works.** A tooltip explains whether the raid uses a shared Normal/Heroic lockout, separate lockouts per difficulty, a standalone Raid Finder lockout, or a single difficulty.
-
 - **A new minimap button icon**, the neon mirrored-RR mark on a dark disc.
 
 ### Changed
 
 - **The load dialog was refreshed.** The prompt now reads "Select Route," the route name is larger, and the route buttons are styled neon FULL and SKIP graphics, centered as a pair. The old Cancel button is replaced by a close button in the top-right corner matching the rest of the UI.
-
 - **The transmog browser dropdowns are relabeled and resized.** Each dropdown now carries a label (Exp, Raid, Boss, Class), the bars are sized to fit their contents instead of leaving empty space, and they cascade in a slight left-to-right stagger.
-
 - **The route line in the footer reads "Route: Full"** for the full-clear route (previously "Standard").
-
 - **Choosing a route is no longer locked in until you kill a boss.** If you reload or step out and back in before your first kill, the route picker reappears so you can still switch between Full and Skip, with a "Continue?" hint marking the route you'd picked. Once you've killed a boss, reloading quietly resumes that route and prints a one-line reminder of which route you're on and your progress.
-
 - **The minimap button and the /rr command both always open the full panel**, regardless of your "On Login Show RetroRuns" preference. That setting now applies only to how the panel appears when you log in outside a raid.
-
 - **Removed the "What's New?" label from the footer.** The version number stays, and the "!" still appears beside it when there's an update you haven't viewed.
 
 ### Fixed
 
 - **The SKIP button on the load dialog now stays locked until the specific shortcut its route uses is unlocked.** On raids with more than one skip (like Hellfire Citadel), it could previously light up as soon as any shortcut was unlocked, even one leading to a different boss.
-
 - **Picking FULL after previously choosing SKIP now correctly loads the full route.** If you'd selected SKIP earlier in a lockout, then reloaded and chose FULL, the addon could keep running the skip route. Your latest choice is now always honored.
-
 - **Corrected the portal marker on the Hellfire Citadel Mannoroth skip** so the waypoint sits on the Destructor's Rise portal.
-
 - **The transmog summary and browser now agree on collected items.** An appearance you owned through one difficulty could be tallied as still-needed in the main-panel summary while the browser correctly showed it collected; the two now count it the same way.
-
 
 ## [2.0.0] - 2026-06-21
 
@@ -390,9 +240,7 @@ All notable changes to RetroRuns are documented here.
 ### Added
 
 - **All five Mists of Pandaria raids are now fully supported: Mogu'shan Vaults, Heart of Fear, Terrace of Endless Spring, Throne of Thunder, and Siege of Orgrimmar.** Each has complete routing through every encounter with travel notes and map lines for every leg, including the portals, teleports, and tower and door transitions between sub-zones. Per-boss loot is tracked alongside tier set tokens and other unique drops, and each raid's Glory meta-achievement sub-achievements are rated for solo difficulty. Where a raid has skip paths, those are tracked too.
-
 - **Mists of Pandaria raids show a lockout indicator on their difficulty pills.** Mogu'shan Vaults, Heart of Fear, Terrace of Endless Spring, and Throne of Thunder share a single lockout between their Normal and Heroic difficulties for the week -- clearing a boss on one locks the other until reset. When one difficulty is committed, its sibling now shows a small lock glyph; hovering it explains that the other difficulty is unavailable until the weekly reset.
-
 - **New feature: Toaster.** A loot notification system built for solo legacy-raid running. When you loot a boss, Toaster pops a clean on-screen toast for the things that matter -- new transmog appearances and special loot like mounts, pets, and toys -- while everything else (gear you'll vendor, crafting mats, tier tokens) is rolled into a single tidy summary line in chat with a clickable option to expand the full list. It replaces Blizzard's scattered loot spam with one consolidated line per kill. Its own settings page lets you toggle the toasts and the loot summary independently, adjust the toast scale, and drag the toasts wherever you want them.
 
 ### Changed
@@ -413,27 +261,20 @@ All notable changes to RetroRuns are documented here.
 ### Added
 
 - **Three Warlords of Draenor raids are now fully supported: Highmaul, Blackrock Foundry, and Hellfire Citadel.** Each has complete routing through every encounter with travel notes and map lines for every leg, including the portal and teleport transitions between sub-zones. Per-boss loot is tracked alongside the special weapon-enchant illusions and other unique drops, and each raid's Glory meta-achievement sub-achievements are rated for solo difficulty. Where a raid has skip paths, those are tracked too.
-
 - **The Skips window is now collapsible by expansion.** Each expansion is a header you can expand or collapse with the +/- button beside its name, matching how the supported-raids list on the main panel works. When you're inside a raid, that raid's expansion opens automatically so its skip status is visible right away; everything else stays collapsed until you open it.
 
 ### Changed
 
 - **Boss Progress list order.** The in-raid Boss Progress checklist now lists bosses in the order RetroRuns routes you to them, rather than the Encounter Journal's default order. For most raids these match, but where the recommended kill order differs from the Journal, the list now lines up with the travel directions. This is adjustable in Settings if you prefer the Encounter Journal order.
-
 - **Double-skip raids show two skip indicators.** Raids with two independent skip paths (Antorus the Burning Throne and Hellfire Citadel) now show one diamond per path next to the raid name, each lit or dimmed based on whether that specific skip is unlocked, instead of a single combined indicator.
-
 - **Skips window close button and layout.** The window now closes with an X button in the top-right corner instead of an OK button, and the skip-detail popout no longer wraps its text awkwardly.
 
 ### Fixed
 
 - **Transmog browser scaling on open.** The window now respects your saved window-scale setting from the moment it opens, instead of briefly rendering at 100% and then snapping to the correct size.
-
 - **Transmog browser "missing" indicator.** Items you've collected the appearance for but don't own are now marked with a red X that matches the size of the green check, so the status indicators line up cleanly down the column.
-
 - **Transmog browser bottom spacing.** The window's auto-sizing was leaving a sliver of empty space at the bottom; that gap is now reclaimed so the window fits its content.
-
 - **Settings panel height on first open.** The settings window could open far too tall on the first login of a session, correcting itself only after being moved. It now sizes correctly the first time it opens.
-
 - **Boss Progress checklist alignment.** The brackets next to each boss name (current, killed, upcoming) now line up consistently regardless of font size.
 
 ## [1.11.0b] - 2026-05-26

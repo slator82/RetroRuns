@@ -6,7 +6,7 @@
 ## Title-frFR: RetroRuns
 ## Title-ruRU: RetroRuns
 ## Title-zhCN: RetroRuns
-## Notes: Solo legacy raid navigator: routing, tips, and achievement tracking
+## Notes: A legacy companion for raids & dungeons: routing, tips, transmog, and achievements
 ## Notes-esES: Navegador de bandas antiguas en solitario: rutas, consejos y seguimiento de logros
 ## Notes-esMX: Navegador de bandas antiguas en solitario: rutas, consejos y seguimiento de logros
 ## Notes-deDE: Solo-Navigator für alte Schlachtzüge: Routen, Tipps und Erfolgstracking
